@@ -57,7 +57,7 @@ const CHAINS: { id: number; name: string }[] = [
 
 /* -------- chain params for add/switch (MetaMask) -------- */
 const RPC: Record<number, string[]> = {
-  1: ["https://twilight-warmhearted-sun.quiknode.pro/1b0aa7d5389980aadfe80082f8b9c5d11d1ae78b/"],
+  1: ["https://rpc.ankr.com/eth"],
   56: ["https://bsc-dataseed.binance.org/"],
   137: ["https://polygon-rpc.com/"],
   42161: ["https://arb1.arbitrum.io/rpc"],
@@ -169,42 +169,7 @@ async function readErc20MetaViaRpc(chainId: number, address: string): Promise<To
   return null;
 }
 
-/* ---------------- helpers for balances & pricing ---------------- */
-async function readNativeBalance(chainId: number, account: string): Promise<string | null> {
-  try {
-    const eth = (window as any).ethereum;
-    const hex = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
-    const wei = BigInt(hex);
-    const decs = NATIVE_CCY[chainId]?.decimals ?? 18;
-    const n = Number(wei) / 10 ** decs;
-    return n.toString();
-  } catch { return null; }
-}
-async function readErc20Balance(contract: string, account: string, decimals: number): Promise<string | null> {
-  try {
-    const eth = (window as any).ethereum;
-    // balanceOf(address) selector + left-padded account
-    const sel = "0x70a08231";
-    const addr = account.toLowerCase().replace("0x", "").padStart(64, "0");
-    const data = sel + addr;
-    const hex = await eth.request({
-      method: "eth_call",
-      params: [{ to: contract, data }, "latest"],
-    });
-    const raw = BigInt(hex || "0x0");
-    const n = Number(raw) / 10 ** decimals;
-    return n.toString();
-  } catch { return null; }
-}
-
-function makeProbeAmount(decimals: number): string {
-  // small amount to approximate “fair price”
-  const places = Math.min(6, Math.max(3, Math.floor(decimals / 3)));
-  const s = "0." + "0".repeat(places - 1) + "1"; // e.g. 0.001
-  return s;
-}
-
-/* ------------- Token Picker ------------- */
+/* ---------------- Token Picker ---------------- */
 function TokenPicker({
   open,
   onClose,
@@ -241,7 +206,7 @@ function TokenPicker({
 
   const qIsAddr = isAddress(q.trim());
 
-  // AUTO-LOAD: if user pasted a contract address, fetch and add it instantly
+  // Auto-load by address when pasted
   useEffect(() => {
     let stop = false;
     (async () => {
@@ -262,7 +227,9 @@ function TokenPicker({
         if (!stop) setLoadingCustom(false);
       }
     })();
-    return () => { stop = true; };
+    return () => {
+      stop = true;
+    };
   }, [qIsAddr, q, onLoadByAddress, onSelect, tokens]);
 
   if (!open) return null;
@@ -343,23 +310,19 @@ function TokenPicker({
       </div>
 
       <style jsx>{`
-        /* overlay + panel */
         .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
         .picker { width:600px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
 
-        /* top search bar */
         .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #eef0f2; }
         .picker-top input { flex:1; border:1px solid #e6e8eb; border-radius:10px; padding:10px 12px; }
 
-        /* address helper row (the green button area) */
         .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #f3f5f7; flex-wrap:wrap; }
         .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
         .custom-caption { white-space:nowrap; color:#374151; }
         .custom-code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; }
-        .custom-right { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
-        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; flex-shrink:0; white-space:nowrap; }
+        .custom-right { display:flex; align-items:center; gap:8px; }
+        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
 
-        /* list area */
         .picker-list { max-height:60vh; overflow:auto; }
         .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; text-align:left; }
         .picker-row:hover { background:#f9f9fb; }
@@ -369,7 +332,6 @@ function TokenPicker({
         .pick-name { font-size:12px; color:#6b7280; }
         .pick-addr { font-size:11px; color:#9aa1a9; }
         .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
-
         .err { color:#b42318; font-size:12px; }
       `}</style>
     </div>
@@ -381,7 +343,7 @@ export default function Page() {
   // wallet
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(56); // default BNB for your testing
+  const [chainId, setChainId] = useState<number>(56); // default BNB
 
   // tokens
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
@@ -395,13 +357,12 @@ export default function Page() {
   const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
   const [customSlip, setCustomSlip] = useState<string>("");
 
-  // quote + USD + price impact
+  // quote + USD
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
-  const [priceImpact, setPriceImpact] = useState<number | null>(null);
 
   // balances
   const [srcBal, setSrcBal] = useState<number | null>(null);
@@ -439,7 +400,7 @@ export default function Page() {
     setAccount(null);
   }
 
-  // when UI chain changes, switch/add in wallet
+  // switch chain in wallet when UI chain changes
   useEffect(() => {
     (async () => {
       try {
@@ -513,8 +474,9 @@ export default function Page() {
         console.error(e);
       }
     })();
-    return () => { stop = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      stop = true;
+    };
   }, [chainId]);
 
   function onPickSrc(t: Token) {
@@ -528,7 +490,7 @@ export default function Page() {
     setDstToken(t);
   }
 
-  /* ---- Add custom by address (SERVER API) ---- */
+  /* ---- Add custom by address ---- */
   async function loadCustomAddress(addr: string) {
     const a = addr.trim().toLowerCase();
     if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
@@ -545,151 +507,96 @@ export default function Page() {
     setSrcToken((s) => s || (meta as Token));
   }
 
-  /* ---- balances on token / account change ---- */
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!account || !srcToken) return setSrcBal(null);
-        if (srcToken.address === NATIVE) {
-          const n = await readNativeBalance(chainId, account);
-          setSrcBal(n ? Number(n) : null);
-        } else {
-          const n = await readErc20Balance(srcToken.address, account, srcToken.decimals);
-          setSrcBal(n ? Number(n) : null);
-        }
-      } catch { setSrcBal(null); }
-    })();
-  }, [account, srcToken, chainId]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!account || !dstToken) return setDstBal(null);
-        if (dstToken.address === NATIVE) {
-          const n = await readNativeBalance(chainId, account);
-          setDstBal(n ? Number(n) : null);
-        } else {
-          const n = await readErc20Balance(dstToken.address, account, dstToken.decimals);
-          setDstBal(n ? Number(n) : null);
-        }
-      } catch { setDstBal(null); }
-    })();
-  }, [account, dstToken, chainId]);
-
-  /* ---- 1inch quote helper ---- */
-  async function oneInchQuote(body: { chainId: number; src: string; dst: string; amount: string }): Promise<QuoteResponse> {
-    const r = await fetch("/api/oneinch/quote", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    return (await r.json()) as QuoteResponse;
-  }
-
-  /* ---- main quote + USD + price impact ---- */
+  /* ---- 1inch quote ---- */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
       setQuoting(true);
       setQuoteErr(null);
-      setPriceImpact(null);
-
       try {
-        const amountUnits = toUnits(amountIn || "0", srcToken.decimals);
-
-        // 1) main route src -> dst
-        const j = await oneInchQuote({ chainId, src: srcToken.address, dst: dstToken.address, amount: amountUnits });
-        setQuote(j);
-        if (!("ok" in j) || !j.ok) throw new Error((j as any).error || "quote failed");
-
-        // Normalize handy numbers
-        const inAmt = Number(amountIn || "0");
-        const outAmt = Number(j.data.dstAmount) / 10 ** (dstToken.decimals || 6);
-
-        // 2) USD reflections using 1inch math (to USDC)
-        // Find a USDC token address (from loaded list) or assume symbol USDC
-        let usdcAddr: string | null = null;
-        if (tokens) {
-          const hit = Object.values(tokens).find((t) => (t.symbol || "").toUpperCase() === "USDC");
-          if (hit) usdcAddr = hit.address;
-        }
-        // Fallback: if dst is already USDC, we have USD directly.
-        const wantUSDC = usdcAddr || (dstToken.symbol?.toUpperCase() === "USDC" ? dstToken.address : null);
-
-        // Pay USD
-        if ((srcToken.symbol || "").toUpperCase() === "USDC") {
-          setPayUsd(inAmt);
-        } else if (wantUSDC) {
-          const qUSD = await oneInchQuote({
-            chainId,
-            src: srcToken.address,
-            dst: wantUSDC,
-            amount: amountUnits,
-          });
-          if ("ok" in qUSD && qUSD.ok) {
-            const usdOut = Number(qUSD.data.dstAmount) / 10 ** 6; // assume USDC 6 decimals
-            setPayUsd(usdOut);
-          } else setPayUsd(null);
-        } else {
-          setPayUsd(null);
-        }
-
-        // Receive USD
-        if ((dstToken.symbol || "").toUpperCase() === "USDC") {
-          setRecvUsd(outAmt);
-        } else if (wantUSDC) {
-          const qRecvUSD = await oneInchQuote({
-            chainId,
-            src: dstToken.address,
-            dst: wantUSDC,
-            amount: j.data.dstAmount,
-          });
-          if ("ok" in qRecvUSD && qRecvUSD.ok) {
-            const usdOut = Number(qRecvUSD.data.dstAmount) / 10 ** 6;
-            setRecvUsd(usdOut);
-          } else setRecvUsd(null);
-        } else {
-          setRecvUsd(null);
-        }
-
-        // 3) Price impact estimate:
-        // Compare the execution price with a tiny probe price to approximate fair rate.
-        const probeHuman = makeProbeAmount(srcToken.decimals);
-        const probeUnits = toUnits(probeHuman, srcToken.decimals);
-        const qProbe = await oneInchQuote({
+        const body = {
           chainId,
           src: srcToken.address,
           dst: dstToken.address,
-          amount: probeUnits,
+          amount: toUnits(amountIn || "0", srcToken.decimals),
+        };
+        const r = await fetch("/api/oneinch/quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
         });
-
-        if ("ok" in qProbe && qProbe.ok) {
-          const execPrice = inAmt > 0 ? outAmt / inAmt : 0; // dst per src (actual)
-          const probeOut = Number(qProbe.data.dstAmount) / 10 ** (dstToken.decimals || 6);
-            // tiny amount in human:
-          const probeIn = Number(probeHuman);
-          const fairPrice = probeIn > 0 ? probeOut / probeIn : 0;
-
-          if (fairPrice > 0 && execPrice > 0) {
-            const impact = Math.max(0, Math.min(100, ((fairPrice - execPrice) / fairPrice) * 100));
-            setPriceImpact(impact);
-          } else setPriceImpact(null);
-        } else {
-          setPriceImpact(null);
-        }
+        const j = (await r.json()) as QuoteResponse;
+        setQuote(j);
+        if (!("ok" in j) || !j.ok) setQuoteErr((j as any).error || "quote failed");
       } catch (e: any) {
         setQuote(null);
         setQuoteErr(e?.message || String(e));
-        setPayUsd(null);
-        setRecvUsd(null);
-        setPriceImpact(null);
       } finally {
         setQuoting(false);
       }
-    }, 300);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainId, srcToken?.address, dstToken?.address, amountIn, tokens]);
+    }, 250);
+  }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
+
+  /* ---- Simple USD reflections ---- */
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!srcToken || !dstToken || !amountIn) return setPayUsd(null);
+        if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn));
+        const r = await fetch("/api/oneinch/quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chainId,
+            src: srcToken.address,
+            dst: dstToken.address,
+            amount: toUnits(amountIn, srcToken.decimals),
+          }),
+        });
+        const j = (await r.json()) as QuoteResponse;
+        if ((j as QuoteOk).ok) {
+          const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
+          setPayUsd(out);
+        } else setPayUsd(null);
+      } catch {
+        setPayUsd(null);
+      }
+    })();
+
+    (async () => {
+      try {
+        if (!dstToken || !quote || !("ok" in quote) || !quote.ok) return setRecvUsd(null);
+        const out = Number(quote.data.dstAmount) / 10 ** (dstToken.decimals || 6);
+        setRecvUsd(out || null);
+      } catch {
+        setRecvUsd(null);
+      }
+    })();
+  }, [chainId, srcToken, dstToken, amountIn, quote]);
+
+  /* ---- Balances (direct RPC via wallet) ---- */
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !srcToken) return setSrcBal(null);
+        try { await ensureChain(chainId); } catch {}
+        const bal = await readTokenBalance(account, srcToken);
+        setSrcBal(bal);
+      } catch { setSrcBal(null); }
+    })();
+  }, [account, chainId, srcToken?.address]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !dstToken) return setDstBal(null);
+        try { await ensureChain(chainId); } catch {}
+        const bal = await readTokenBalance(account, dstToken);
+        setDstBal(bal);
+      } catch { setDstBal(null); }
+    })();
+  }, [account, chainId, dstToken?.address]);
 
   /* ---- Build + Send ---- */
   async function onSwap() {
@@ -788,13 +695,28 @@ export default function Page() {
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
   }, [quote, amountIn, srcToken, dstToken]);
 
-  /* ---- flip tokens ---- */
-  function flipTokens() {
-    if (!srcToken || !dstToken) return;
-    const prevSrc = srcToken;
-    setSrcToken(dstToken);
-    setDstToken(prevSrc);
-  }
+  // dummy price impact label (not calculated here)
+  const priceImpact = "0.00%";
+
+  // MAX: uses src balance; for native leaves tiny gas buffer
+  const onMaxSrc = () => {
+    if (srcBal == null || !srcToken) return;
+    let max = srcBal;
+    const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
+    if (isNative) max = Math.max(0, max - 0.0003); // leave dust for gas
+    setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
+  };
+  const onMaxDst = () => {
+    // For simplicity, same behavior as pay-side MAX: swap all you can pay.
+    onMaxSrc();
+  };
+
+  const onFlip = () => {
+    const a = srcToken;
+    const b = dstToken;
+    setSrcToken(b);
+    setDstToken(a);
+  };
 
   return (
     <div className="wrap">
@@ -841,22 +763,25 @@ export default function Page() {
             )}
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
-          <input
-            className="amt"
-            value={amountIn}
-            inputMode="decimal"
-            onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
-            placeholder="0.0"
-          />
+          <div className="amtBox">
+            <input
+              className="amt"
+              value={amountIn}
+              inputMode="decimal"
+              onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0.0"
+            />
+            <button className="max" onClick={onMaxSrc}>MAX</button>
+          </div>
         </div>
-        <div className="usd">
-          {payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}
-          {srcBal != null ? <span className="bal">Balance: {fmt(srcBal, 6)}</span> : null}
+        <div className="metaRow">
+          <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
+          <div className="bal">Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}</div>
         </div>
 
-        {/* Flip */}
-        <div className="swap-mid">
-          <button className="flip" onClick={flipTokens} title="Switch tokens">⇅</button>
+        {/* centered flip */}
+        <div className="flip-wrap">
+          <button className="flip" onClick={onFlip} aria-label="Flip pay/receive">↑↓</button>
         </div>
 
         {/* You receive */}
@@ -871,11 +796,14 @@ export default function Page() {
             )}
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
-          <div className="amt ro">{quoting ? "…" : toAmount}</div>
+          <div className="amtBox">
+            <div className="amt ro">{quoting ? "…" : toAmount}</div>
+            <button className="max" onClick={onMaxDst}>MAX</button>
+          </div>
         </div>
-        <div className="usd">
-          {recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}
-          {dstBal != null ? <span className="bal">Balance: {fmt(dstBal, 6)}</span> : null}
+        <div className="metaRow">
+          <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
+          <div className="bal">Balance: {dstBal != null ? fmt(dstBal, 6) : "—"}</div>
         </div>
 
         {/* Slippage */}
@@ -907,14 +835,7 @@ export default function Page() {
         {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">
-            Est. network fee: –
-            {priceImpact != null ? (
-              <span className={`impact ${priceImpact > 0.5 ? "warn" : ""}`}>
-                &nbsp;&nbsp;•&nbsp;Price impact: {priceImpact.toFixed(2)}%
-              </span>
-            ) : null}
-          </div>
+          <div className="muted">Est. network fee: – <span className="impact">• Price impact: {priceImpact}</span></div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
@@ -958,13 +879,16 @@ export default function Page() {
         .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
         .token img { width:20px; height:20px; border-radius:999px; }
         .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; }
+        .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; }
         .amt.ro { user-select:none; }
-        .usd { font-size:12px; color:#6b7280; text-align:right; margin-top:4px; min-height:16px; display:flex; justify-content:space-between; align-items:center; }
-        .bal { margin-left:8px; color:#9aa1a9; }
-        .swap-mid { display:flex; justify-content:center; margin:8px 0; }
-        .flip { width:36px; height:36px; border-radius:999px; border:1px solid #d7dbdf; background:#fff; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,.08); font-size:16px; }
-        .flip:hover { background:#f6f8fa; }
+        .max { border:1px solid #d7dbdf; border-radius:999px; padding:4px 8px; font-size:12px; background:#f6f8fa; }
+        .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
+        .usd { font-size:12px; color:#6b7280; }
+        .bal { font-size:12px; color:#6b7280; }
+        .flip-wrap { display:flex; justify-content:center; align-items:center; margin: 8px 0 10px; }
+        .flip { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #e6e8eb; background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.06); cursor:pointer; font-weight:700; line-height:1; }
+        .flip:hover { background:#f7f9fb; }
         .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
         .chips { display:flex; gap:8px; align-items:center; }
         .chip { border:1px solid #d7dbdf; background:#f6f8fa; border-radius:999px; padding:6px 10px; font-size:12px; }
@@ -973,8 +897,7 @@ export default function Page() {
         .custom input { width:60px; border:1px solid #e6e8eb; border-radius:8px; padding:6px 8px; text-align:right; font-size:12px; }
         .meta { display:flex; justify-content:space-between; font-size:12px; margin-top:8px; }
         .muted { color:#6b7280; }
-        .impact { margin-left:6px; }
-        .impact.warn { color:#b42318; font-weight:600; }
+        .impact { color:#b42318; font-weight:600; }
         .err { margin-top:8px; color:#b42318; font-size:13px; }
         .swap { width:100%; margin-top:14px; background:#118a4e; color:#fff; border:none; border-radius:12px; padding:12px; font-weight:700; cursor:pointer; }
         .swap:disabled { opacity:.6; cursor:not-allowed; }
@@ -990,4 +913,28 @@ function toUnits(amount: string, decimals: number): string {
   const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
   const s = BigInt(cleanI) * BigInt(10) ** BigInt(decimals) + BigInt(cleanF || "0");
   return s.toString();
+}
+
+/* ---- minimal balance readers via wallet RPC ---- */
+async function readTokenBalance(account: string, token: Token): Promise<number> {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  // Native coin
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
+    const hexBal: string = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
+    const wei = BigInt(hexBal);
+    return Number(wei) / 10 ** (token.decimals || 18);
+  }
+
+  // ERC-20 balanceOf(address)
+  const selector = "0x70a08231";
+  const addr = account.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + addr;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  const raw = BigInt(hex || "0x0");
+  return Number(raw) / 10 ** (token.decimals || 18);
 }

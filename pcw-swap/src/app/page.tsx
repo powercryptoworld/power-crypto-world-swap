@@ -16,18 +16,31 @@ type QuoteOk = { ok: true; data: { dstAmount: string; srcToken: Token; dstToken:
 type QuoteFail = { ok: false; error: string };
 type QuoteResponse = QuoteOk | QuoteFail;
 
-type SwapBuildOk = { ok: true; data: { tx?: { to: string; from?: string; data: string; value?: any; gas?: any; gasPrice?: any; maxFeePerGas?: any; maxPriorityFeePerGas?: any } } };
+type SwapBuildOk = {
+  ok: true;
+  data: {
+    tx?: {
+      to: string;
+      from?: string;
+      data: string;
+      value?: any;
+      gas?: any;
+      gasPrice?: any;
+      maxFeePerGas?: any;
+      maxPriorityFeePerGas?: any;
+    };
+  };
+};
 type SwapBuildFail = { ok: false; error: string };
 type SwapBuildResponse = SwapBuildOk | SwapBuildFail;
 
 /* --------------- Consts --------------- */
-const fmt = (n: number, d = 6) => new Intl.NumberFormat(undefined, { maximumFractionDigits: d }).format(n);
+const fmt = (n: number, d = 6) =>
+  new Intl.NumberFormat(undefined, { maximumFractionDigits: d }).format(n);
 const short = (a: string) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
 
-/** 1inch native placeholder (exact) */
 const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
-/** Chains shown (add more later as needed) */
 const CHAINS: { id: number; name: string }[] = [
   { id: 1, name: "Ethereum" },
   { id: 56, name: "BNB Chain" },
@@ -42,7 +55,76 @@ const CHAINS: { id: number; name: string }[] = [
   { id: 250, name: "Fantom" },
 ];
 
-/** Per-chain native symbol priorities */
+/* -------- chain params for add/switch (MetaMask) -------- */
+const RPC: Record<number, string[]> = {
+  1: ["https://twilight-warmhearted-sun.quiknode.pro/1b0aa7d5389980aadfe80082f8b9c5d11d1ae78b/"],
+  56: ["https://bsc-dataseed.binance.org/"],
+  137: ["https://polygon-rpc.com/"],
+  42161: ["https://arb1.arbitrum.io/rpc"],
+  10: ["https://mainnet.optimism.io"],
+  8453: ["https://mainnet.base.org"],
+  43114: ["https://api.avax.network/ext/bc/C/rpc"],
+  324: ["https://mainnet.era.zksync.io"],
+  59144: ["https://rpc.linea.build"],
+  100: ["https://rpc.gnosis.gateway.fm"],
+  250: ["https://rpc.ftm.tools/"],
+};
+const EXPLORER: Record<number, string> = {
+  1: "https://etherscan.io",
+  56: "https://bscscan.com",
+  137: "https://polygonscan.com",
+  42161: "https://arbiscan.io",
+  10: "https://optimistic.etherscan.io",
+  8453: "https://basescan.org",
+  43114: "https://snowtrace.io",
+  324: "https://explorer.zksync.io",
+  59144: "https://lineascan.build",
+  100: "https://gnosisscan.io",
+  250: "https://ftmscan.com",
+};
+const NATIVE_CCY: Record<number, { name: string; symbol: string; decimals: number }> = {
+  1: { name: "Ether", symbol: "ETH", decimals: 18 },
+  56: { name: "BNB", symbol: "BNB", decimals: 18 },
+  137: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+  42161: { name: "Ether", symbol: "ETH", decimals: 18 },
+  10: { name: "Ether", symbol: "ETH", decimals: 18 },
+  8453: { name: "Ether", symbol: "ETH", decimals: 18 },
+  43114: { name: "AVAX", symbol: "AVAX", decimals: 18 },
+  324: { name: "Ether", symbol: "ETH", decimals: 18 },
+  59144: { name: "Ether", symbol: "ETH", decimals: 18 },
+  100: { name: "xDAI", symbol: "XDAI", decimals: 18 },
+  250: { name: "FTM", symbol: "FTM", decimals: 18 },
+};
+async function ensureChain(chainId: number) {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+  const targetHex = "0x" + chainId.toString(16);
+  const current = parseInt(await eth.request({ method: "eth_chainId" }), 16);
+  if (current === chainId) return;
+
+  try {
+    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
+  } catch (e: any) {
+    if (e?.code === 4902 && RPC[chainId] && NATIVE_CCY[chainId]) {
+      await eth.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: targetHex,
+            chainName: CHAINS.find((c) => c.id === chainId)?.name || `Chain ${chainId}`,
+            rpcUrls: RPC[chainId],
+            blockExplorerUrls: EXPLORER[chainId] ? [EXPLORER[chainId]] : [],
+            nativeCurrency: NATIVE_CCY[chainId],
+          },
+        ],
+      });
+      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
+    } else {
+      throw e;
+    }
+  }
+}
+
 const NATIVE_PRIORITIES: Record<number, string[]> = {
   1: ["ETH", "WETH"],
   42161: ["ETH", "WETH"],
@@ -57,7 +139,6 @@ const NATIVE_PRIORITIES: Record<number, string[]> = {
   100: ["XDAI", "WXDAI", "GNO", "WGNO"],
 };
 
-/* Helpers for native detection/normalization */
 function isNativeSymbol(chainId: number, sym?: string) {
   if (!sym) return false;
   const wanted = NATIVE_PRIORITIES[chainId] || [];
@@ -66,23 +147,52 @@ function isNativeSymbol(chainId: number, sym?: string) {
 function asNativeToken(chainId: number, base?: Token): Token | undefined {
   if (!base) return undefined;
   return {
-    address: NATIVE,           // force native placeholder address
+    address: NATIVE,
     symbol: base.symbol,
     name: base.name || base.symbol,
-    decimals: 18,              // native is 18
+    decimals: 18,
     logoURI: base.logoURI,
   };
+}
+const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test(s.trim());
+
+/* ---------- Server API: read ERC-20 meta (works on all EVM chains) ---------- */
+async function readErc20MetaViaRpc(chainId: number, address: string): Promise<Token | null> {
+  const r = await fetch("/api/erc20meta", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chainId, address }),
+  });
+  if (!r.ok) return null;
+  const j = await r.json();
+  if (j?.ok && j?.token) return j.token as Token;
+  return null;
 }
 
 /* ------------- Token Picker ------------- */
 function TokenPicker({
-  open, onClose, tokens, onSelect,
-}: { open: boolean; onClose: () => void; tokens?: TokensByAddr; onSelect: (t: Token) => void; }) {
+  open,
+  onClose,
+  tokens,
+  onSelect,
+  onLoadByAddress,
+  chainId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  tokens?: TokensByAddr;
+  onSelect: (t: Token) => void;
+  onLoadByAddress: (addr: string) => Promise<void>;
+  chainId: number;
+}) {
   const [q, setQ] = useState("");
+  const [loadingCustom, setLoadingCustom] = useState(false);
+  const [customErr, setCustomErr] = useState<string | null>(null);
+
   const list = useMemo(() => {
     if (!tokens) return [];
     const arr = Object.values(tokens);
-    if (!q.trim()) return arr.slice(0, 400);
+    if (!q.trim() || isAddress(q.trim())) return arr.slice(0, 400);
     const s = q.trim().toLowerCase();
     return arr
       .filter(
@@ -94,19 +204,85 @@ function TokenPicker({
       .slice(0, 400);
   }, [tokens, q]);
 
+  const qIsAddr = isAddress(q.trim());
+
+  // AUTO-LOAD: if user pasted a contract address, fetch and add it instantly
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      if (!qIsAddr) return;
+      // avoid duplicate fetch if it already exists
+      const addrL = q.trim().toLowerCase();
+      if (tokens && tokens[addrL]) {
+        // already in list; auto-select
+        onSelect(tokens[addrL]);
+        return;
+      }
+      setLoadingCustom(true);
+      setCustomErr(null);
+      try {
+        await onLoadByAddress(addrL);
+        if (!stop) {
+          setQ(""); // clear search so the new token shows in the list
+        }
+      } catch (e: any) {
+        if (!stop) setCustomErr(e?.message || "Failed to load token");
+      } finally {
+        if (!stop) setLoadingCustom(false);
+      }
+    })();
+    return () => {
+      stop = true;
+    };
+  }, [qIsAddr, q, onLoadByAddress, onSelect, tokens]);
+
   if (!open) return null;
   return (
     <div className="picker-wrap" onClick={onClose}>
       <div className="picker" onClick={(e) => e.stopPropagation()}>
         <div className="picker-top">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / symbol / address…" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name / symbol / contract…"
+          />
           <button onClick={onClose}>Close</button>
         </div>
+
+        {qIsAddr && (
+          <div className="custom-load">
+            <div>Contract on {CHAINS.find((c) => c.id === chainId)?.name}:</div>
+            <code>{q.trim()}</code>
+            <button
+              disabled={loadingCustom}
+              onClick={async () => {
+                setLoadingCustom(true);
+                setCustomErr(null);
+                try {
+                  await onLoadByAddress(q.trim());
+                  setQ("");
+                } catch (e: any) {
+                  setCustomErr(e?.message || "Failed to load token");
+                } finally {
+                  setLoadingCustom(false);
+                }
+              }}
+            >
+              {loadingCustom ? "Loading…" : "Add token from chain"}
+            </button>
+            {customErr && <div className="err">{customErr}</div>}
+          </div>
+        )}
+
         <div className="picker-list">
           {tokens ? (
             list.length ? (
               list.map((t) => (
-                <button key={t.address + t.symbol} className="picker-row" onClick={() => (onSelect(t), onClose())}>
+                <button
+                  key={t.address + t.symbol}
+                  className="picker-row"
+                  onClick={() => (onSelect(t), onClose())}
+                >
                   <div className="logo">
                     {t.logoURI ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -145,6 +321,10 @@ function TokenPicker({
         .pick-name { font-size:12px; color:#6b7280; }
         .pick-addr { font-size:11px; color:#9aa1a9; }
         .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
+        .custom-load { display:flex; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; }
+        .custom-load code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; }
+        .custom-load button { border:1px solid #d7dbdf; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
+        .err { color:#b42318; font-size:12px; }
       `}</style>
     </div>
   );
@@ -155,7 +335,7 @@ export default function Page() {
   // wallet
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(1);
+  const [chainId, setChainId] = useState<number>(56); // default BNB for your testing
 
   // tokens
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
@@ -179,7 +359,13 @@ export default function Page() {
   const debounceRef = useRef<number | null>(null);
   const bps = useMemo(
     () =>
-      slipMode === "slow" ? 10 : slipMode === "fast" ? 50 : slipMode === "custom" ? Math.round(Math.max(0, Number(customSlip || "0")) * 100) : 25,
+      slipMode === "slow"
+        ? 10
+        : slipMode === "fast"
+        ? 50
+        : slipMode === "custom"
+        ? Math.round(Math.max(0, Number(customSlip || "0")) * 100)
+        : 25,
     [slipMode, customSlip]
   );
 
@@ -198,16 +384,19 @@ export default function Page() {
     eth.on?.("accountsChanged", (a: string[]) => setAccount(a?.[0] ?? null));
     eth.on?.("chainChanged", (hex: string) => setWalletChainId(parseInt(hex, 16) || null));
   }
-  function disconnect() { setAccount(null); }
+  function disconnect() {
+    setAccount(null);
+  }
 
-  // ask wallet to switch when UI chain changes
+  // when UI chain changes, switch/add in wallet
   useEffect(() => {
     (async () => {
-      const eth = (window as any).ethereum;
-      if (!eth || walletChainId == null || walletChainId === chainId) return;
       try {
-        await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + chainId.toString(16) }] });
-      } catch {}
+        if (walletChainId == null || walletChainId === chainId) return;
+        await ensureChain(chainId);
+      } catch (e: any) {
+        console.warn("chain switch/add failed:", e?.message || e);
+      }
     })();
   }, [chainId, walletChainId]);
 
@@ -221,7 +410,6 @@ export default function Page() {
       (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
     }
     if (!map) map = {};
-    // normalize + lowercase keys
     const norm: TokensByAddr = {};
     for (const [kRaw, tRaw] of Object.entries(map)) {
       const k = kRaw.toLowerCase();
@@ -241,7 +429,11 @@ export default function Page() {
       const hit = vals.find((t) => (t.symbol || "").toUpperCase() === sym);
       if (hit) return asNativeToken(chainId, hit);
     }
-    const fuzzy = vals.find((t) => /eth|weth|bnb|wbnb|matic|wmatic|avax|wavax|ftm|wftm|xdai|wxdai|gno|wgno/i.test((t.symbol || "") + " " + (t.name || "")));
+    const fuzzy = vals.find((t) =>
+      /eth|weth|bnb|wbnb|matic|wmatic|avax|wavax|ftm|wftm|xdai|wxdai|gno|wgno/i.test(
+        (t.symbol || "") + " " + (t.name || "")
+      )
+    );
     return fuzzy ? asNativeToken(chainId, fuzzy) : undefined;
   }
   function pickUSDC(map: TokensByAddr): Token | undefined {
@@ -270,7 +462,9 @@ export default function Page() {
         console.error(e);
       }
     })();
-    return () => { stop = true; };
+    return () => {
+      stop = true;
+    };
   }, [chainId]);
 
   function onPickSrc(t: Token) {
@@ -278,57 +472,98 @@ export default function Page() {
       const nat = asNativeToken(chainId, t);
       if (nat) setSrcToken(nat);
       else setSrcToken(t);
-    } else {
-      setSrcToken(t);
-    }
+    } else setSrcToken(t);
   }
-  function onPickDst(t: Token) { setDstToken(t); }
+  function onPickDst(t: Token) {
+    setDstToken(t);
+  }
+
+  /* ---- Add custom by address (SERVER API) ---- */
+  async function loadCustomAddress(addr: string) {
+    const a = addr.trim().toLowerCase();
+    if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
+    // read meta from server (works for ERC-20/BEP-20/etc on selected chain)
+    const meta = await readErc20MetaViaRpc(chainId, a);
+    if (!meta) throw new Error("Could not read token (check network/contract)");
+    setTokens((prev) => {
+      const next = { ...(prev || {}) };
+      next[a] = {
+        ...meta,
+        // fallback logo pattern similar to 1inch
+        logoURI: meta.logoURI || `https://tokens.1inch.io/${chainId}/${a}.png`,
+      };
+      return next;
+    });
+    // make it the current selection (acts like 1inch behavior)
+    setSrcToken((s) => s || (meta as Token));
+  }
 
   /* ---- main quote ---- */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
-      setQuoting(true); setQuoteErr(null);
+      setQuoting(true);
+      setQuoteErr(null);
       try {
-        const body = { chainId, src: srcToken.address, dst: dstToken.address, amount: toUnits(amountIn || "0", srcToken.decimals) };
-        const r = await fetch("/api/oneinch/quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const body = {
+          chainId,
+          src: srcToken.address,
+          dst: dstToken.address,
+          amount: toUnits(amountIn || "0", srcToken.decimals),
+        };
+        const r = await fetch("/api/oneinch/quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
         const j = (await r.json()) as QuoteResponse;
         setQuote(j);
-        if (!j.ok) setQuoteErr(j.error || "quote failed");
+        if (!("ok" in j) || !j.ok) setQuoteErr((j as any).error || "quote failed");
       } catch (e: any) {
-        setQuote(null); setQuoteErr(e?.message || String(e));
-      } finally { setQuoting(false); }
+        setQuote(null);
+        setQuoteErr(e?.message || String(e));
+      } finally {
+        setQuoting(false);
+      }
     }, 250);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
 
   /* ---- $ reflections ---- */
   useEffect(() => {
-    // pay
     (async () => {
       try {
         if (!srcToken || !dstToken || !amountIn) return setPayUsd(null);
         if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn));
         const r = await fetch("/api/oneinch/quote", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ chainId, src: srcToken.address, dst: dstToken.address, amount: toUnits(amountIn, srcToken.decimals) }),
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chainId,
+            src: srcToken.address,
+            dst: dstToken.address,
+            amount: toUnits(amountIn, srcToken.decimals),
+          }),
         });
         const j = (await r.json()) as QuoteResponse;
         if ((j as QuoteOk).ok) {
           const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
           setPayUsd(out);
         } else setPayUsd(null);
-      } catch { setPayUsd(null); }
+      } catch {
+        setPayUsd(null);
+      }
     })();
 
-    // receive
     (async () => {
       try {
         if (!dstToken || !quote || !("ok" in quote) || !quote.ok) return setRecvUsd(null);
         const out = Number(quote.data.dstAmount) / 10 ** (dstToken.decimals || 6);
         setRecvUsd(out || null);
-      } catch { setRecvUsd(null); }
+      } catch {
+        setRecvUsd(null);
+      }
     })();
   }, [chainId, srcToken, dstToken, amountIn, quote]);
 
@@ -336,31 +571,20 @@ export default function Page() {
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
-
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
 
-    // Ensure wallet network
     try {
-      const hexId: string = await eth.request({ method: "eth_chainId" });
-      const id = parseInt(hexId, 16);
-      if (id !== chainId) {
-        await eth.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x" + chainId.toString(16) }],
-        });
-      }
-    } catch {
-      return alert("Please switch your wallet to the selected network and try again.");
+      await ensureChain(chainId);
+    } catch (e: any) {
+      return alert(e?.message || "Please switch your wallet to the selected network.");
     }
 
-    // helper: normalize anything to 0x-hex
     const toHex = (val: any): string | undefined => {
       if (val == null) return undefined;
-
       if (typeof val === "object") {
-        if (typeof val.hex === "string") return val.hex;                 // viem
-        if (typeof (val as any)._hex === "string") return (val as any)._hex; // ethers v5
+        if (typeof (val as any).hex === "string") return (val as any).hex;
+        if (typeof (val as any)._hex === "string") return (val as any)._hex;
         if (typeof (val as any).toHexString === "function") return (val as any).toHexString();
         if (typeof (val as any).toString === "function") {
           try {
@@ -370,7 +594,6 @@ export default function Page() {
           } catch {}
         }
       }
-
       if (typeof val === "string") {
         const s = String(val);
         if (/^0x/i.test(s)) return s;
@@ -379,14 +602,12 @@ export default function Page() {
         if (Number.isFinite(n)) return "0x" + BigInt(Math.trunc(Math.max(0, n))).toString(16);
         return undefined;
       }
-
       if (typeof val === "number") return "0x" + Math.trunc(Math.max(0, val)).toString(16);
       if (typeof val === "bigint") return "0x" + val.toString(16);
       return undefined;
     };
 
     try {
-      // build
       const body = {
         chainId,
         from: account,
@@ -402,11 +623,8 @@ export default function Page() {
         body: JSON.stringify(body),
       });
       const j = (await r.json()) as SwapBuildResponse;
-      if (!j.ok || !j.data?.tx) {
-        return alert((j as any)?.error || "Swap build failed");
-      }
+      if (!j.ok || !j.data?.tx) return alert((j as any)?.error || "Swap build failed");
 
-      // clean tx
       const raw: any = j.data.tx;
       const txParams: any = {
         from: account,
@@ -423,7 +641,6 @@ export default function Page() {
       if (maxFeePerGas) txParams.maxFeePerGas = maxFeePerGas;
       if (maxPriorityFeePerGas) txParams.maxPriorityFeePerGas = maxPriorityFeePerGas;
 
-      // send
       const txHash: string = await eth.request({
         method: "eth_sendTransaction",
         params: [txParams],
@@ -434,7 +651,6 @@ export default function Page() {
     }
   }
 
-  /* ---- UI helpers ---- */
   const toAmount = useMemo(() => {
     if (!quote || !("ok" in quote) || !quote.ok) return "0.000000";
     const out = Number(quote.data.dstAmount) / 10 ** (quote.data.dstToken.decimals || 6);
@@ -451,20 +667,32 @@ export default function Page() {
   return (
     <div className="wrap">
       <div className="card">
-        {/* top */}
         <div className="head">
           <div className="title">PCW Swap</div>
           <div className="right">
-            <select className="sel" value={chainId} onChange={(e) => setChainId(Number(e.target.value))} title="Network">
-              {CHAINS.map((c) => (<option key={c.id} value={c.id}>{c.name} (id {c.id})</option>))}
+            <select
+              className="sel"
+              value={chainId}
+              onChange={(e) => setChainId(Number(e.target.value))}
+              title="Network"
+            >
+              {CHAINS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} (id {c.id})
+                </option>
+              ))}
             </select>
             {account ? (
               <>
                 <span className="pill green">{short(account)}</span>
-                <button className="link" onClick={disconnect}>Disconnect</button>
+                <button className="link" onClick={disconnect}>
+                  Disconnect
+                </button>
               </>
             ) : (
-              <button className="btn" onClick={connect}>Connect</button>
+              <button className="btn" onClick={connect}>
+                Connect
+              </button>
             )}
           </div>
         </div>
@@ -473,10 +701,21 @@ export default function Page() {
         <label className="lbl">You pay</label>
         <div className="row">
           <button className="token" onClick={() => setPickSrcOpen(true)}>
-            {srcToken?.logoURI ? <img src={srcToken.logoURI} alt="" /> : <span className="dot" />}
+            {srcToken?.logoURI ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={srcToken.logoURI} alt="" />
+            ) : (
+              <span className="dot" />
+            )}
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
-          <input className="amt" value={amountIn} inputMode="decimal" onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))} placeholder="0.0" />
+          <input
+            className="amt"
+            value={amountIn}
+            inputMode="decimal"
+            onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
+            placeholder="0.0"
+          />
         </div>
         <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
 
@@ -484,7 +723,12 @@ export default function Page() {
         <label className="lbl">You receive</label>
         <div className="row">
           <button className="token" onClick={() => setPickDstOpen(true)}>
-            {dstToken?.logoURI ? <img src={dstToken.logoURI} alt="" /> : <span className="dot" />}
+            {dstToken?.logoURI ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={dstToken.logoURI} alt="" />
+            ) : (
+              <span className="dot" />
+            )}
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
           <div className="amt ro">{quoting ? "…" : toAmount}</div>
@@ -495,12 +739,24 @@ export default function Page() {
         <div className="slip">
           <span className="muted">Slippage</span>
           <div className="chips">
-            <button className={`chip ${slipMode === "slow" ? "on" : ""}`} onClick={() => setSlipMode("slow")}>Slow</button>
-            <button className={`chip ${slipMode === "market" ? "on" : ""}`} onClick={() => setSlipMode("market")}>Market</button>
-            <button className={`chip ${slipMode === "fast" ? "on" : ""}`} onClick={() => setSlipMode("fast")}>Fast</button>
+            <button className={`chip ${slipMode === "slow" ? "on" : ""}`} onClick={() => setSlipMode("slow")}>
+              Slow
+            </button>
+            <button className={`chip ${slipMode === "market" ? "on" : ""}`} onClick={() => setSlipMode("market")}>
+              Market
+            </button>
+            <button className={`chip ${slipMode === "fast" ? "on" : ""}`} onClick={() => setSlipMode("fast")}>
+              Fast
+            </button>
             <div className="custom">
-              <button className={`chip ${slipMode === "custom" ? "on" : ""}`} onClick={() => setSlipMode("custom")}>custom %</button>
-              <input value={customSlip} placeholder={(bps / 100).toString()} onChange={(e) => setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))} />
+              <button className={`chip ${slipMode === "custom" ? "on" : ""}`} onClick={() => setSlipMode("custom")}>
+                custom %
+              </button>
+              <input
+                value={customSlip}
+                placeholder={(bps / 100).toString()}
+                onChange={(e) => setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))}
+              />
             </div>
           </div>
         </div>
@@ -511,16 +767,30 @@ export default function Page() {
           <div className="muted">Est. network fee: –</div>
         </div>
 
-        {/* Errors */}
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
 
-        {/* Swap */}
-        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || !amountIn || quoting}>Swap</button>
+        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || !amountIn || quoting}>
+          Swap
+        </button>
       </div>
 
       {/* Pickers */}
-      <TokenPicker open={pickSrcOpen} onClose={() => setPickSrcOpen(false)} tokens={tokens} onSelect={onPickSrc} />
-      <TokenPicker open={pickDstOpen} onClose={() => setPickDstOpen(false)} tokens={tokens} onSelect={onPickDst} />
+      <TokenPicker
+        open={pickSrcOpen}
+        onClose={() => setPickSrcOpen(false)}
+        tokens={tokens}
+        onSelect={onPickSrc}
+        onLoadByAddress={loadCustomAddress}
+        chainId={chainId}
+      />
+      <TokenPicker
+        open={pickDstOpen}
+        onClose={() => setPickDstOpen(false)}
+        tokens={tokens}
+        onSelect={onPickDst}
+        onLoadByAddress={loadCustomAddress}
+        chainId={chainId}
+      />
 
       <style jsx>{`
         .wrap { display:grid; place-items:center; min-height:100dvh; background:#fafbfc; padding:24px; }

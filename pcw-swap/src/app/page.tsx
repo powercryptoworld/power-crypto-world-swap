@@ -211,10 +211,8 @@ function TokenPicker({
     let stop = false;
     (async () => {
       if (!qIsAddr) return;
-      // avoid duplicate fetch if it already exists
       const addrL = q.trim().toLowerCase();
       if (tokens && tokens[addrL]) {
-        // already in list; auto-select
         onSelect(tokens[addrL]);
         return;
       }
@@ -222,9 +220,7 @@ function TokenPicker({
       setCustomErr(null);
       try {
         await onLoadByAddress(addrL);
-        if (!stop) {
-          setQ(""); // clear search so the new token shows in the list
-        }
+        if (!stop) setQ("");
       } catch (e: any) {
         if (!stop) setCustomErr(e?.message || "Failed to load token");
       } finally {
@@ -234,7 +230,8 @@ function TokenPicker({
     return () => {
       stop = true;
     };
-  }, [qIsAddr, q, onLoadByAddress, onSelect, tokens]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qIsAddr, q]);
 
   if (!open) return null;
   return (
@@ -251,26 +248,32 @@ function TokenPicker({
 
         {qIsAddr && (
           <div className="custom-load">
-            <div>Contract on {CHAINS.find((c) => c.id === chainId)?.name}:</div>
-            <code>{q.trim()}</code>
-            <button
-              disabled={loadingCustom}
-              onClick={async () => {
-                setLoadingCustom(true);
-                setCustomErr(null);
-                try {
-                  await onLoadByAddress(q.trim());
-                  setQ("");
-                } catch (e: any) {
-                  setCustomErr(e?.message || "Failed to load token");
-                } finally {
-                  setLoadingCustom(false);
-                }
-              }}
-            >
-              {loadingCustom ? "Loading…" : "Add token from chain"}
-            </button>
-            {customErr && <div className="err">{customErr}</div>}
+            <div className="custom-left">
+              <div className="custom-caption">
+                Contract on {CHAINS.find((c) => c.id === chainId)?.name}:
+              </div>
+              <code className="custom-code">{q.trim()}</code>
+            </div>
+            <div className="custom-right">
+              <button
+                disabled={loadingCustom}
+                onClick={async () => {
+                  setLoadingCustom(true);
+                  setCustomErr(null);
+                  try {
+                    await onLoadByAddress(q.trim());
+                    setQ("");
+                  } catch (e: any) {
+                    setCustomErr(e?.message || "Failed to load token");
+                  } finally {
+                    setLoadingCustom(false);
+                  }
+                }}
+              >
+                {loadingCustom ? "Loading…" : "Add token from chain"}
+              </button>
+              {customErr && <div className="err">{customErr}</div>}
+            </div>
           </div>
         )}
 
@@ -308,10 +311,23 @@ function TokenPicker({
       </div>
 
       <style jsx>{`
-        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding-top:10vh; z-index:50; }
-        .picker { width:520px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
+        /* overlay + panel */
+        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
+        .picker { width:600px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
+
+        /* top search bar */
         .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #eef0f2; }
         .picker-top input { flex:1; border:1px solid #e6e8eb; border-radius:10px; padding:10px 12px; }
+
+        /* address helper row (green button area) */
+        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #f3f5f7; flex-wrap:wrap; }
+        .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
+        .custom-caption { white-space:nowrap; color:#374151; }
+        .custom-code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; }
+        .custom-right { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; flex-shrink:0; white-space:nowrap; }
+
+        /* list area */
         .picker-list { max-height:60vh; overflow:auto; }
         .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; text-align:left; }
         .picker-row:hover { background:#f9f9fb; }
@@ -321,9 +337,7 @@ function TokenPicker({
         .pick-name { font-size:12px; color:#6b7280; }
         .pick-addr { font-size:11px; color:#9aa1a9; }
         .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
-        .custom-load { display:flex; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; }
-        .custom-load code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; }
-        .custom-load button { border:1px solid #d7dbdf; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
+
         .err { color:#b42318; font-size:12px; }
       `}</style>
     </div>
@@ -355,6 +369,10 @@ export default function Page() {
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
+
+  // balances
+  const [srcBal, setSrcBal] = useState<string | null>(null);
+  const [dstBal, setDstBal] = useState<string | null>(null);
 
   const debounceRef = useRef<number | null>(null);
   const bps = useMemo(
@@ -482,21 +500,67 @@ export default function Page() {
   async function loadCustomAddress(addr: string) {
     const a = addr.trim().toLowerCase();
     if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
-    // read meta from server (works for ERC-20/BEP-20/etc on selected chain)
     const meta = await readErc20MetaViaRpc(chainId, a);
     if (!meta) throw new Error("Could not read token (check network/contract)");
     setTokens((prev) => {
       const next = { ...(prev || {}) };
       next[a] = {
         ...meta,
-        // fallback logo pattern similar to 1inch
         logoURI: meta.logoURI || `https://tokens.1inch.io/${chainId}/${a}.png`,
       };
       return next;
     });
-    // make it the current selection (acts like 1inch behavior)
     setSrcToken((s) => s || (meta as Token));
   }
+
+  /* ---- balances ---- */
+  function fromUnits(v: bigint, decimals: number) {
+    const s = v.toString();
+    if (decimals === 0) return s;
+    const pad = Math.max(0, decimals - s.length + 1);
+    const whole = s.length > decimals ? s.slice(0, -decimals) : "0";
+    const frac = (s.length > decimals ? s.slice(-decimals) : "0".repeat(decimals - s.length) + s).replace(/0+$/, "");
+    return Number(`${whole}.${frac || "0"}`);
+  }
+  function pad32(hexNo0x: string) {
+    return hexNo0x.padStart(64, "0");
+  }
+  function addrToTopic(addr: string) {
+    return `000000000000000000000000${addr.replace(/^0x/, "").toLowerCase()}`;
+  }
+  async function readTokenBalance(t?: Token, who?: string | null): Promise<string | null> {
+    if (!t || !who) return null;
+    const eth = (window as any).ethereum;
+    if (!eth) return null;
+
+    try {
+      if (t.address.toLowerCase() === NATIVE.toLowerCase()) {
+        const hex: string = await eth.request({ method: "eth_getBalance", params: [who, "latest"] });
+        const bi = BigInt(hex);
+        return fmt(fromUnits(bi, 18), 6);
+      } else {
+        const data =
+          "0x70a08231" + // balanceOf(address)
+          addrToTopic(who);
+        const res: string = await eth.request({
+          method: "eth_call",
+          params: [{ to: t.address, data }, "latest"],
+        });
+        const bi = BigInt(res || "0x0");
+        return fmt(fromUnits(bi, t.decimals || 18), 6);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  // refresh balances on relevant changes
+  useEffect(() => {
+    (async () => setSrcBal(await readTokenBalance(srcToken, account)))();
+  }, [account, chainId, srcToken?.address]);
+  useEffect(() => {
+    (async () => setDstBal(await readTokenBalance(dstToken, account)))();
+  }, [account, chainId, dstToken?.address]);
 
   /* ---- main quote ---- */
   useEffect(() => {
@@ -530,7 +594,7 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
 
-  /* ---- $ reflections ---- */
+  /* ---- $ reflections (simple) ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -717,7 +781,10 @@ export default function Page() {
             placeholder="0.0"
           />
         </div>
-        <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
+        <div className="subline">
+          <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
+          <div className="bal">{account ? `Balance: ${srcBal ?? "—"}` : "Balance: —"}</div>
+        </div>
 
         {/* You receive */}
         <label className="lbl">You receive</label>
@@ -733,7 +800,10 @@ export default function Page() {
           </button>
           <div className="amt ro">{quoting ? "…" : toAmount}</div>
         </div>
-        <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
+        <div className="subline">
+          <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
+          <div className="bal">{account ? `Balance: ${dstBal ?? "—"}` : "Balance: —"}</div>
+        </div>
 
         {/* Slippage */}
         <div className="slip">
@@ -810,7 +880,9 @@ export default function Page() {
         .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
         .amt { text-align:right; font-size:18px; border:none; outline:none; }
         .amt.ro { user-select:none; }
-        .usd { font-size:12px; color:#6b7280; text-align:right; margin-top:4px; min-height:16px; }
+        .subline { display:flex; justify-content:space-between; margin-top:4px; }
+        .usd { font-size:12px; color:#6b7280; text-align:left; min-height:16px; }
+        .bal { font-size:12px; color:#6b7280; text-align:right; min-height:16px; }
         .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
         .chips { display:flex; gap:8px; align-items:center; }
         .chip { border:1px solid #d7dbdf; background:#f6f8fa; border-radius:999px; padding:6px 10px; font-size:12px; }

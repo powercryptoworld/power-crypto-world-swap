@@ -156,7 +156,7 @@ function asNativeToken(chainId: number, base?: Token): Token | undefined {
 }
 const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test(s.trim());
 
-/* ---------- Server API: read ERC-20 meta ---------- */
+/* ---------- Server API: read ERC-20 meta (works on all EVM chains) ---------- */
 async function readErc20MetaViaRpc(chainId: number, address: string): Promise<Token | null> {
   const r = await fetch("/api/erc20meta", {
     method: "POST",
@@ -340,28 +340,43 @@ function TokenPicker({
 
 /* ---------------- Page ---------------- */
 export default function Page() {
+  // wallet
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(56);
+  const [chainId, setChainId] = useState<number>(56); // default BNB
 
+  // tokens
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
   const [srcToken, setSrcToken] = useState<Token | undefined>(undefined);
   const [dstToken, setDstToken] = useState<Token | undefined>(undefined);
   const [pickSrcOpen, setPickSrcOpen] = useState(false);
   const [pickDstOpen, setPickDstOpen] = useState(false);
 
-  const [amountIn, setAmountIn] = useState<string>("1");
+  // which side the user is editing: "src" (top) or "dst" (bottom)
+  const [editSide, setEditSide] = useState<"src" | "dst">("src");
+
+  // amounts as text
+  const [amountIn, setAmountIn] = useState<string>("1");      // user edits when editSide==='src'
+  const [amountOut, setAmountOut] = useState<string>("");     // user edits when editSide==='dst'
+  const [computedInFromOut, setComputedInFromOut] = useState<string>("0"); // shown in top when editing bottom
+
+  // slippage
   const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
   const [customSlip, setCustomSlip] = useState<string>("");
 
+  // quote + USD
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
 
+  // balances
   const [srcBal, setSrcBal] = useState<number | null>(null);
   const [dstBal, setDstBal] = useState<number | null>(null);
+
+  // NEW: price impact state (% as a number, e.g. 0.27 means 0.27%)
+  const [priceImpactPct, setPriceImpactPct] = useState<number | null>(null);
 
   const debounceRef = useRef<number | null>(null);
   const bps = useMemo(
@@ -376,6 +391,7 @@ export default function Page() {
     [slipMode, customSlip]
   );
 
+  /* ---- wallet ---- */
   async function connect() {
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
@@ -394,6 +410,7 @@ export default function Page() {
     setAccount(null);
   }
 
+  // switch chain in wallet when UI chain changes
   useEffect(() => {
     (async () => {
       try {
@@ -404,6 +421,27 @@ export default function Page() {
       }
     })();
   }, [chainId, walletChainId]);
+
+  /* ---- tokens fetch ---- */
+  async function fetchTokens(cid: number): Promise<TokensByAddr> {
+    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
+    const j = await r.json();
+    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
+    if (!map && Array.isArray(j)) {
+      map = {};
+      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
+    }
+    if (!map) map = {};
+    const norm: TokensByAddr = {};
+    for (const [kRaw, tRaw] of Object.entries(map)) {
+      const k = kRaw.toLowerCase();
+      const t: any = { ...tRaw };
+      t.address = String(t.address);
+      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
+      norm[k] = t as Token;
+    }
+    return norm;
+  }
 
   function pickNative(map: TokensByAddr): Token | undefined {
     const vals = Object.values(map);
@@ -429,33 +467,6 @@ export default function Page() {
       vals[1]
     );
   }
-  function pickPCW(map: TokensByAddr): Token | undefined {
-    const vals = Object.values(map);
-    return (
-      vals.find((t) => (t.symbol || "").toUpperCase() === "PCW") ||
-      vals.find((t) => (t.name || "").toLowerCase().includes("power crypto world"))
-    );
-  }
-
-  async function fetchTokens(cid: number): Promise<TokensByAddr> {
-    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
-    const j = await r.json();
-    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
-    if (!map && Array.isArray(j)) {
-      map = {};
-      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
-    }
-    if (!map) map = {};
-    const norm: TokensByAddr = {};
-    for (const [kRaw, tRaw] of Object.entries(map)) {
-      const k = kRaw.toLowerCase();
-      const t: any = { ...tRaw };
-      t.address = String(t.address);
-      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
-      norm[k] = t as Token;
-    }
-    return norm;
-  }
 
   useEffect(() => {
     let stop = false;
@@ -467,7 +478,7 @@ export default function Page() {
         const map = await fetchTokens(chainId);
         if (stop) return;
         setTokens(map);
-        setSrcToken((chainId === 56 ? pickPCW(map) : undefined) || pickNative(map) || Object.values(map)[0]);
+        setSrcToken(pickNative(map) || Object.values(map)[0]);
         setDstToken(pickUSDC(map) || Object.values(map)[1]);
       } catch (e) {
         console.error(e);
@@ -489,6 +500,7 @@ export default function Page() {
     setDstToken(t);
   }
 
+  /* ---- Add custom by address ---- */
   async function loadCustomAddress(addr: string) {
     const a = addr.trim().toLowerCase();
     if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
@@ -505,56 +517,131 @@ export default function Page() {
     setSrcToken((s) => s || (meta as Token));
   }
 
+  /* =========== QUOTES (two directions) =========== */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
+
     debounceRef.current = window.setTimeout(async () => {
       setQuoting(true);
       setQuoteErr(null);
+      setPriceImpactPct(null); // reset while we recompute
       try {
-        const body = {
-          chainId,
-          src: srcToken.address,
-          dst: dstToken.address,
-          amount: toUnits(amountIn || "0", srcToken.decimals),
-        };
-        const r = await fetch("/api/oneinch/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const j = (await r.json()) as QuoteResponse;
-        setQuote(j);
-        if (!("ok" in j) || !j.ok) setQuoteErr((j as any).error || "quote failed");
+        if (editSide === "src") {
+          // normal: src -> dst for amountIn
+          const body = {
+            chainId,
+            src: srcToken.address,
+            dst: dstToken.address,
+            amount: toUnits(amountIn || "0", srcToken.decimals),
+          };
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const j = (await r.json()) as QuoteResponse;
+          setQuote(j);
+          if (!("ok" in j) || !j.ok) {
+            setQuoteErr((j as any).error || "quote failed");
+          } else {
+            // --- NEW: compute price impact vs tiny trade (approx. no-slippage unit price)
+            await computePriceImpactPct({
+              chainId,
+              srcToken,
+              dstToken,
+              amountInTokens: Number(amountIn || "0"),
+              mainQuote: j as QuoteOk,
+              setPct: setPriceImpactPct,
+            });
+          }
+        } else {
+          // reverse: user typed desired OUT; estimate needed IN by quoting dst -> src
+          const body = {
+            chainId,
+            src: dstToken.address,
+            dst: srcToken.address,
+            amount: toUnits(amountOut || "0", dstToken.decimals),
+          };
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const j = (await r.json()) as QuoteResponse;
+          if ("ok" in j && j.ok) {
+            const needIn = Number(j.data.dstAmount) / 10 ** (srcToken.decimals || 18);
+            setComputedInFromOut(needIn ? String(needIn) : "0");
+            // also set a forward-looking quote so the bottom shows a clean number too
+            const forward = await fetch("/api/oneinch/quote", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                chainId,
+                src: srcToken.address,
+                dst: dstToken.address,
+                amount: toUnits(String(needIn || 0), srcToken.decimals),
+              }),
+            });
+            const fwd = (await forward.json()) as QuoteResponse;
+            setQuote(fwd);
+            if ("ok" in fwd && fwd.ok) {
+              await computePriceImpactPct({
+                chainId,
+                srcToken,
+                dstToken,
+                amountInTokens: needIn || 0,
+                mainQuote: fwd as QuoteOk,
+                setPct: setPriceImpactPct,
+              });
+            } else {
+              setPriceImpactPct(null);
+            }
+          } else {
+            setComputedInFromOut("0");
+            setQuote(j);
+            setQuoteErr((j as any).error || "quote failed");
+            setPriceImpactPct(null);
+          }
+        }
       } catch (e: any) {
         setQuote(null);
         setQuoteErr(e?.message || String(e));
+        setPriceImpactPct(null);
       } finally {
         setQuoting(false);
       }
     }, 250);
-  }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
+  }, [editSide, chainId, srcToken?.address, dstToken?.address, amountIn, amountOut, srcToken?.decimals, dstToken?.decimals]);
 
+  /* ---- Simple USD reflections ---- */
   useEffect(() => {
     (async () => {
       try {
-        if (!srcToken || !dstToken || !amountIn) return setPayUsd(null);
-        if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn));
-        const r = await fetch("/api/oneinch/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chainId,
-            src: srcToken.address,
-            dst: dstToken.address,
-            amount: toUnits(amountIn, srcToken.decimals),
-          }),
-        });
-        const j = (await r.json()) as QuoteResponse;
-        if ((j as QuoteOk).ok) {
-          const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
-          setPayUsd(out);
-        } else setPayUsd(null);
+        if (!srcToken || !dstToken) return setPayUsd(null);
+
+        // what the user is "paying" depends on which side they edit
+        if (editSide === "src") {
+          if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn || "0"));
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chainId,
+              src: srcToken.address,
+              dst: dstToken.address,
+              amount: toUnits(amountIn || "0", srcToken.decimals),
+            }),
+          });
+          const j = (await r.json()) as QuoteResponse;
+          if ((j as QuoteOk).ok) {
+            const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
+            setPayUsd(out);
+          } else setPayUsd(null);
+        } else {
+          // editing desired OUT — treat payUsd as desired USDC (if USDC) otherwise just echo amountOut
+          setPayUsd(Number(amountOut || "0"));
+        }
       } catch {
         setPayUsd(null);
       }
@@ -569,8 +656,9 @@ export default function Page() {
         setRecvUsd(null);
       }
     })();
-  }, [chainId, srcToken, dstToken, amountIn, quote]);
+  }, [editSide, chainId, srcToken, dstToken, amountIn, amountOut, quote]);
 
+  /* ---- Balances (direct RPC via wallet) ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -593,6 +681,7 @@ export default function Page() {
     })();
   }, [account, chainId, dstToken?.address]);
 
+  /* ---- Build + Send ---- */
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
@@ -633,12 +722,13 @@ export default function Page() {
     };
 
     try {
+      const srcAmt = editSide === "src" ? amountIn : computedInFromOut;
       const body = {
         chainId,
         from: account,
         src: srcToken.address,
         dst: dstToken.address,
-        amount: toUnits(amountIn || "0", srcToken.decimals),
+        amount: toUnits(srcAmt || "0", srcToken.decimals),
         slippageBps: bps,
       };
 
@@ -666,7 +756,7 @@ export default function Page() {
       if (maxFeePerGas) txParams.maxFeePerGas = maxFeePerGas;
       if (maxPriorityFeePerGas) txParams.maxPriorityFeePerGas = maxPriorityFeePerGas;
 
-      const txHash: string = await (window as any).ethereum.request({
+      const txHash: string = await eth.request({
         method: "eth_sendTransaction",
         params: [txParams],
       });
@@ -684,28 +774,30 @@ export default function Page() {
 
   const rateText = useMemo(() => {
     if (!quote || !("ok" in quote) || !quote.ok || !srcToken || !dstToken) return "—";
-    const aIn = Number(amountIn || "0");
+    const aIn = Number((editSide === "src" ? amountIn : computedInFromOut) || "0");
     const out = Number(quote.data.dstAmount) / 10 ** dstToken.decimals;
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
-  }, [quote, amountIn, srcToken, dstToken]);
+  }, [quote, amountIn, computedInFromOut, editSide, srcToken, dstToken]);
 
-  const priceImpact = "0.00%";
+  // --- NEW: human text for price impact
+  const priceImpactText = useMemo(() => {
+    if (priceImpactPct == null || !Number.isFinite(priceImpactPct)) return "—";
+    return `${priceImpactPct.toFixed(2)}%`;
+  }, [priceImpactPct]);
 
-  // MAX buttons
+  // MAX: uses src balance; for native leaves tiny gas buffer
   const onMaxSrc = () => {
     if (srcBal == null || !srcToken) return;
+    let max = srcBal;
     const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
-    if (!isNative) {
-      setAmountIn(srcBal > 0 ? String(Number(srcBal.toFixed(6))) : "0");
-      return;
-    }
-    const pct = srcBal * 0.02;
-    const floor = 0.00002;
-    const safety = Math.max(pct, floor);
-    const spendable = Math.max(0, srcBal - safety);
-    setAmountIn(spendable > 0 ? String(Number(spendable.toFixed(6))) : "0");
+    if (isNative) max = Math.max(0, max - 0.0003); // leave dust for gas
+    setEditSide("src");
+    setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
   };
-  const onMaxDst = () => { onMaxSrc(); };
+  const onMaxDst = () => {
+    // keep behavior simple: swap all you can pay (same as top MAX)
+    onMaxSrc();
+  };
 
   const onFlip = () => {
     const a = srcToken;
@@ -714,10 +806,9 @@ export default function Page() {
     setDstToken(a);
   };
 
-  const pcwToken = useMemo(
-    () => (tokens ? Object.values(tokens).find(t => (t.symbol || "").toUpperCase() === "PCW") : undefined),
-    [tokens]
-  );
+  // values for the two inputs
+  const payInputValue = editSide === "src" ? amountIn : (computedInFromOut ? String(Number(computedInFromOut)) : "");
+  const recvInputValue = editSide === "src" ? toAmount : amountOut;
 
   return (
     <div className="wrap">
@@ -737,18 +828,6 @@ export default function Page() {
                 </option>
               ))}
             </select>
-            {pcwToken && (
-              <button
-                className="btn"
-                title="Spend PCW"
-                onClick={() => {
-                  setSrcToken(pcwToken);
-                  setAmountIn("");
-                }}
-              >
-                Spend PCW
-              </button>
-            )}
             {account ? (
               <>
                 <span className="pill green">{short(account)}</span>
@@ -777,17 +856,15 @@ export default function Page() {
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
           <div className="amtBox">
-            {/* KEY makes the input remount when pay token changes → fixes “frozen” input */}
             <input
-              key={srcToken ? srcToken.address : "native"}
               className="amt"
-              value={amountIn}
+              value={payInputValue}
               inputMode="decimal"
-              autoFocus
+              onFocus={() => setEditSide("src")}
               onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
               placeholder="0.0"
             />
-            <button className="max" type="button" onClick={onMaxSrc}>MAX</button>
+            <button className="max" onClick={onMaxSrc}>MAX</button>
           </div>
         </div>
         <div className="metaRow">
@@ -795,6 +872,7 @@ export default function Page() {
           <div className="bal">Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}</div>
         </div>
 
+        {/* centered flip */}
         <div className="flip-wrap">
           <button className="flip" onClick={onFlip} aria-label="Flip pay/receive">↑↓</button>
         </div>
@@ -812,8 +890,15 @@ export default function Page() {
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
           <div className="amtBox">
-            <div className="amt ro">{quoting ? "…" : toAmount}</div>
-            <button className="max" type="button" onClick={onMaxDst}>MAX</button>
+            <input
+              className="amt"
+              value={recvInputValue}
+              inputMode="decimal"
+              onFocus={() => setEditSide("dst")}
+              onChange={(e) => setAmountOut(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0.0"
+            />
+            <button className="max" onClick={onMaxDst}>MAX</button>
           </div>
         </div>
         <div className="metaRow">
@@ -847,18 +932,20 @@ export default function Page() {
           </div>
         </div>
 
+        {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">Est. network fee: – <span className="impact">• Price impact: 0.00%</span></div>
+          <div className="muted">Est. network fee: – <span className="impact">• Price impact: {priceImpactText}</span></div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
 
-        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || !amountIn || quoting}>
+        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || quoting}>
           Swap
         </button>
       </div>
 
+      {/* Pickers */}
       <TokenPicker
         open={pickSrcOpen}
         onClose={() => setPickSrcOpen(false)}
@@ -888,13 +975,12 @@ export default function Page() {
         .btn, .link { border:1px solid #d7dbdf; border-radius:10px; background:#f6f8fa; padding:6px 10px; font-size:13px; }
         .link { background:transparent; border:none; color:#006adc; cursor:pointer; }
         .lbl { display:block; font-size:12px; color:#6b7280; margin-top:12px; margin-bottom:6px; }
-        .row { position:relative; display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
+        .row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
         .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
         .token img { width:20px; height:20px; border-radius:999px; }
         .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
         .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; pointer-events:auto; }
-        .amt.ro { user-select:none; }
+        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; }
         .max { border:1px solid #d7dbdf; border-radius:999px; padding:4px 8px; font-size:12px; background:#f6f8fa; }
         .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
         .usd { font-size:12px; color:#6b7280; }
@@ -933,11 +1019,14 @@ async function readTokenBalance(account: string, token: Token): Promise<number> 
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("Wallet not found");
 
+  // Native coin
   if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
     const hexBal: string = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
-    const wei = BigInt(hexBal || "0x0");
+    const wei = BigInt(hexBal);
     return Number(wei) / 10 ** (token.decimals || 18);
   }
+
+  // ERC-20 balanceOf(address)
   const selector = "0x70a08231";
   const addr = account.replace(/^0x/, "").padStart(64, "0");
   const data = selector + addr;
@@ -947,4 +1036,70 @@ async function readTokenBalance(account: string, token: Token): Promise<number> 
   });
   const raw = BigInt(hex || "0x0");
   return Number(raw) / 10 ** (token.decimals || 18);
+}
+
+/* ================== NEW: price impact helper ================== */
+async function computePriceImpactPct(opts: {
+  chainId: number;
+  srcToken: Token;
+  dstToken: Token;
+  amountInTokens: number;         // amount user is actually trading (in tokens, not units)
+  mainQuote: QuoteOk;             // the real quote for the trade size
+  setPct: (n: number | null) => void;
+}) {
+  const { chainId, srcToken, dstToken, amountInTokens, mainQuote, setPct } = opts;
+
+  try {
+    // If trade size is 0 or invalid, nothing to compute.
+    if (!amountInTokens || !Number.isFinite(amountInTokens) || amountInTokens <= 0) {
+      setPct(null);
+      return;
+    }
+
+    // Choose a very small "epsilon" trade to approximate the mid-price (near-zero slippage).
+    // We cap between 1e-6 token and 0.01 token so it's not too tiny/huge across tokens.
+    const epsTokenAmount = Math.max(Math.min(amountInTokens, 0.01), 0.000001);
+
+    const epsBody = {
+      chainId,
+      src: srcToken.address,
+      dst: dstToken.address,
+      amount: toUnits(String(epsTokenAmount), srcToken.decimals),
+    };
+
+    const r = await fetch("/api/oneinch/quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(epsBody),
+    });
+    const epsQ = (await r.json()) as QuoteResponse;
+
+    if (!("ok" in epsQ) || !epsQ.ok) {
+      // If baseline fails, we simply show "—" instead of a wrong number.
+      setPct(null);
+      return;
+    }
+
+    // Convert both quotes into token-space (not units).
+    const epsOut = Number(epsQ.data.dstAmount) / 10 ** (dstToken.decimals || 18);
+    const epsIn = epsTokenAmount;
+
+    const unitPriceBaseline = epsIn > 0 ? epsOut / epsIn : 0; // dst per 1 src with ~no slippage
+
+    const actualOut = Number(mainQuote.data.dstAmount) / 10 ** (dstToken.decimals || 18);
+    const idealOut = unitPriceBaseline * amountInTokens;
+
+    // Price impact is how much worse the actual is vs the ideal, as a %
+    // Clamp to [0, 100] and guard math edge cases.
+    let impact = 0;
+    if (idealOut > 0) {
+      impact = ((idealOut - actualOut) / idealOut) * 100;
+    }
+    if (!Number.isFinite(impact) || impact < 0) impact = 0;
+    if (impact > 100) impact = 100;
+
+    setPct(impact);
+  } catch {
+    setPct(null);
+  }
 }

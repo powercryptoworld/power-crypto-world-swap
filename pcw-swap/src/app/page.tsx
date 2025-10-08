@@ -378,6 +378,9 @@ export default function Page() {
   // NEW: price impact state (% as a number, e.g. 0.27 means 0.27%)
   const [priceImpactPct, setPriceImpactPct] = useState<number | null>(null);
 
+  // NEW: minimum trade guard (in USD)
+  const MIN_TRADE_USD = 2; // tweak to 3/5 if you prefer
+
   const debounceRef = useRef<number | null>(null);
   const bps = useMemo(
     () =>
@@ -390,6 +393,11 @@ export default function Page() {
         : 25,
     [slipMode, customSlip]
   );
+
+  // computed flag: is the current trade too small?
+  const tooSmall = useMemo(() => {
+    return (payUsd ?? 0) > 0 && (payUsd as number) < MIN_TRADE_USD;
+  }, [payUsd, MIN_TRADE_USD]);
 
   /* ---- wallet ---- */
   async function connect() {
@@ -683,6 +691,7 @@ export default function Page() {
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
+    if (tooSmall) return alert(`Min trade is about $${MIN_TRADE_USD} to avoid failed tiny swaps.`);
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
 
@@ -943,8 +952,12 @@ export default function Page() {
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
 
-        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || quoting}>
-          Swap
+        <button
+          className="swap"
+          onClick={onSwap}
+          disabled={!srcToken || !dstToken || quoting || tooSmall}
+        >
+          {tooSmall ? `Min ~$${MIN_TRADE_USD} to swap` : "Swap"}
         </button>
       </div>
 

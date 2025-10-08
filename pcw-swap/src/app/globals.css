@@ -1,26 +1,66 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ===== PCW Neon Theme (inspired by Exodus + Solana) ===== */
+
+/* Font smoothing for that "polished app" look */
+html, body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* Theme tokens */
+:root{
+  --pcw-bg-0:#070a13;         /* deep space */
+  --pcw-bg-1:#0b1020;         /* navy */
+  --pcw-bg-2:#0e1530;         /* indigo */
+  --pcw-glow-1:#7c3aed;       /* neon purple */
+  --pcw-glow-2:#06b6d4;       /* neon cyan */
+  --pcw-glow-3:#22d3ee;       /* bright aqua */
+  --pcw-accent:#14f195;       /* Solana green accent */
+  --pcw-text:#e6eaf2;         /* primary text */
+  --pcw-muted:#9aa3b2;        /* muted text */
+  --pcw-card:#0c1224cc;       /* glass card bg (with alpha) */
+  --pcw-stroke:#24304a;       /* card border */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Futuristic gradient backdrop with a subtle animated glow */
+body{
+  margin:0;
+  color:var(--pcw-text);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(124,58,237,.20), transparent 40%),
+    radial-gradient(1200px 600px at 90% 10%, rgba(6,182,212,.18), transparent 45%),
+    linear-gradient(135deg, var(--pcw-bg-0) 0%, var(--pcw-bg-1) 30%, var(--pcw-bg-2) 100%);
+  min-height:100vh;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Optional animated glow aura */
+body::before{
+  content:"";
+  position:fixed;
+  inset:auto -20% -40% -20%;
+  height:60vh;
+  background:
+    radial-gradient(50% 50% at 50% 0%,
+      rgba(34,211,238,.20) 0%,
+      rgba(124,58,237,.20) 50%,
+      transparent 70%);
+  filter: blur(60px);
+  pointer-events:none;
+  animation: pcwFloat 12s ease-in-out infinite alternate;
 }
+@keyframes pcwFloat {
+  0%   { transform: translateY(0px);    opacity: .9; }
+  100% { transform: translateY(-20px);  opacity: 1;  }
+}
+
+/* Make links & focus accents feel ‘neon’ */
+a, button, .link, .btn {
+  accent-color: var(--pcw-accent);
+}
+:focus-visible{
+  outline: 2px solid var(--pcw-accent);
+  outline-offset: 2px;
+}
+
+/* (We’ll restyle the swap card next) */

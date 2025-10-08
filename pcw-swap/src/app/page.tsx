@@ -206,7 +206,6 @@ function TokenPicker({
 
   const qIsAddr = isAddress(q.trim());
 
-  // Auto-load by address when pasted
   useEffect(() => {
     let stop = false;
     (async () => {
@@ -310,29 +309,30 @@ function TokenPicker({
       </div>
 
       <style jsx>{`
-        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
-        .picker { width:600px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
+        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
+        .picker { width:600px; max-width:92vw; background:#0f1b34; color:#e6eaf2; border:1px solid #24304a; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.35); overflow:hidden; }
 
-        .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #eef0f2; }
-        .picker-top input { flex:1; border:1px solid #e6e8eb; border-radius:10px; padding:10px 12px; }
+        .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #24304a; }
+        .picker-top input { flex:1; border:1px solid #24304a; background:#0c162c; color:#e6eaf2; border-radius:10px; padding:10px 12px; }
+        .picker-top button { border:1px solid #24304a; border-radius:10px; padding:8px 12px; background:#142449; color:#e6eaf2; }
 
-        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #f3f5f7; flex-wrap:wrap; }
+        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #24304a; flex-wrap:wrap; }
         .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
-        .custom-caption { white-space:nowrap; color:#374151; }
-        .custom-code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; }
+        .custom-caption { white-space:nowrap; color:#a8b4c9; }
+        .custom-code { background:#0c162c; border:1px solid #24304a; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; color:#e6eaf2; }
         .custom-right { display:flex; align-items:center; gap:8px; }
-        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
+        .custom-load button { border:1px solid #18d29f44; border-radius:10px; padding:6px 10px; background:#18d29f1a; color:#14f195; }
 
         .picker-list { max-height:60vh; overflow:auto; }
-        .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; text-align:left; }
-        .picker-row:hover { background:#f9f9fb; }
+        .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #1d2a44; text-align:left; }
+        .picker-row:hover { background:#0c162c; }
         .logo img { width:28px; height:28px; border-radius:50%; }
-        .dot { width:10px; height:10px; background:#c4c9cf; border-radius:50%; display:inline-block; }
-        .pick-symbol { font-weight:600; }
-        .pick-name { font-size:12px; color:#6b7280; }
-        .pick-addr { font-size:11px; color:#9aa1a9; }
-        .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
-        .err { color:#b42318; font-size:12px; }
+        .dot { width:10px; height:10px; background:#64748b; border-radius:50%; display:inline-block; }
+        .pick-symbol { font-weight:700; color:#e6eaf2; }
+        .pick-name { font-size:12px; color:#a8b4c9; }
+        .pick-addr { font-size:11px; color:#7f8aa3; }
+        .picker-empty { padding:16px; color:#a8b4c9; font-size:14px; }
+        .err { color:#ff6b6b; font-size:12px; }
       `}</style>
     </div>
   );
@@ -620,7 +620,6 @@ export default function Page() {
       try {
         if (!srcToken || !dstToken) return setPayUsd(null);
 
-        // what the user is "paying" depends on which side they edit
         if (editSide === "src") {
           if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn || "0"));
           const r = await fetch("/api/oneinch/quote", {
@@ -639,7 +638,6 @@ export default function Page() {
             setPayUsd(out);
           } else setPayUsd(null);
         } else {
-          // editing desired OUT — treat payUsd as desired USDC (if USDC) otherwise just echo amountOut
           setPayUsd(Number(amountOut || "0"));
         }
       } catch {
@@ -795,7 +793,6 @@ export default function Page() {
     setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
   };
   const onMaxDst = () => {
-    // keep behavior simple: swap all you can pay (same as top MAX)
     onMaxSrc();
   };
 
@@ -856,14 +853,17 @@ export default function Page() {
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
           <div className="amtBox">
-            <input
-              className="amt"
-              value={payInputValue}
-              inputMode="decimal"
-              onFocus={() => setEditSide("src")}
-              onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
-              placeholder="0.0"
-            />
+            <div className="amtCol">
+              <input
+                className="amt"
+                value={payInputValue}
+                inputMode="decimal"
+                onFocus={() => setEditSide("src")}
+                onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="0.0"
+              />
+              <div className="fiat">{payUsd != null ? `~$${fmt(payUsd, 2)}` : "—"}</div>
+            </div>
             <button className="max" onClick={onMaxSrc}>MAX</button>
           </div>
         </div>
@@ -890,14 +890,17 @@ export default function Page() {
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
           <div className="amtBox">
-            <input
-              className="amt"
-              value={recvInputValue}
-              inputMode="decimal"
-              onFocus={() => setEditSide("dst")}
-              onChange={(e) => setAmountOut(e.target.value.replace(/[^\d.]/g, ""))}
-              placeholder="0.0"
-            />
+            <div className="amtCol">
+              <input
+                className="amt"
+                value={recvInputValue}
+                inputMode="decimal"
+                onFocus={() => setEditSide("dst")}
+                onChange={(e) => setAmountOut(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder="0.0"
+              />
+              <div className="fiat">{recvUsd != null ? `~$${fmt(recvUsd, 2)}` : "—"}</div>
+            </div>
             <button className="max" onClick={onMaxDst}>MAX</button>
           </div>
         </div>
@@ -963,43 +966,113 @@ export default function Page() {
         chainId={chainId}
       />
 
+      {/* ==== Dark Neon Card Styles (no logic changes) ==== */}
       <style jsx>{`
-        .wrap { display:grid; place-items:center; min-height:100dvh; background:#fafbfc; padding:24px; }
-        .card { width:560px; max-width:100%; background:#fff; border:1px solid #e6e8eb; border-radius:16px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+        .wrap { display:grid; place-items:center; min-height:100dvh; padding:24px; }
+
+        .card {
+          width:560px; max-width:100%;
+          color: var(--pcw-text);
+          background: var(--pcw-card);
+          border: 1px solid var(--pcw-stroke);
+          border-radius:16px;
+          padding:20px;
+          backdrop-filter: blur(10px);
+          box-shadow: 0 10px 30px rgba(0,0,0,.35);
+        }
+
         .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-        .title { font-weight:700; font-size:20px; }
+        .title { font-weight:800; font-size:20px; letter-spacing:.2px; color:var(--pcw-text); }
         .right { display:flex; gap:8px; align-items:center; }
-        .sel { border:1px solid #d7dbdf; border-radius:10px; padding:6px 8px; font-size:13px; }
-        .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #d7dbdf; background:#f3f5f7; }
-        .green { background:#e9f9f0; border-color:#b9efd3; }
-        .btn, .link { border:1px solid #d7dbdf; border-radius:10px; background:#f6f8fa; padding:6px 10px; font-size:13px; }
-        .link { background:transparent; border:none; color:#006adc; cursor:pointer; }
-        .lbl { display:block; font-size:12px; color:#6b7280; margin-top:12px; margin-bottom:6px; }
-        .row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
-        .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
+
+        .sel, .btn, .link {
+          border:1px solid var(--pcw-stroke);
+          border-radius:10px;
+          background:#0f1b34;
+          color:var(--pcw-text);
+          padding:6px 10px; font-size:13px;
+        }
+        .link { background:transparent; border-color:transparent; color:#9fd6ff; cursor:pointer; }
+        .link:hover { text-decoration:underline; }
+
+        .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #18d29f44; background:#18d29f1a; color:#14f195; }
+        .green { background:#18d29f1a; border-color:#18d29f44; }
+
+        .lbl { display:block; font-size:12px; color:var(--pcw-muted); margin-top:12px; margin-bottom:6px; }
+
+        .row {
+          display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center;
+          border:1px solid var(--pcw-stroke);
+          border-radius:12px; padding:10px 12px;
+          background: rgba(255,255,255,.02);
+        }
+        .token { display:flex; align-items:center; gap:8px; font-weight:700; color:var(--pcw-text); background:transparent; border:none; cursor:pointer; }
         .token img { width:20px; height:20px; border-radius:999px; }
-        .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
+        .dot { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
+
         .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; }
-        .max { border:1px solid #d7dbdf; border-radius:999px; padding:4px 8px; font-size:12px; background:#f6f8fa; }
+        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; color: var(--pcw-text); }
+        .amt::placeholder { color: #7f8aa3; }
+
+        .max {
+          border:1px solid var(--pcw-stroke);
+          border-radius:999px; padding:4px 8px; font-size:12px;
+          background: rgba(255,255,255,.04);
+          color: var(--pcw-text);
+        }
+
+        /* NEW: stack amount + ~$USD under each input */
+        .amtCol { display:flex; flex-direction:column; align-items:flex-end; }
+        .fiat { font-size:12px; line-height:1.1; margin-top:2px; color:#94a3b8; }
+        /* keep the MAX button aligned with the stacked amtCol */
+        .amtBox { align-items:flex-end; }
+
         .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
-        .usd { font-size:12px; color:#6b7280; }
-        .bal { font-size:12px; color:#6b7280; }
+        .usd, .bal { font-size:12px; color:var(--pcw-muted); }
+
         .flip-wrap { display:flex; justify-content:center; align-items:center; margin: 8px 0 10px; }
-        .flip { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #e6e8eb; background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.06); cursor:pointer; font-weight:700; line-height:1; }
-        .flip:hover { background:#f7f9fb; }
+        .flip {
+          width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
+          border-radius:999px; border:1px solid var(--pcw-stroke);
+          background:#0f1b34;
+          box-shadow:0 2px 10px rgba(0,0,0,.25);
+          cursor:pointer; font-weight:700; line-height:1; color:var(--pcw-text);
+        }
+        .flip:hover { background:#132449; }
+
         .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
         .chips { display:flex; gap:8px; align-items:center; }
-        .chip { border:1px solid #d7dbdf; background:#f6f8fa; border-radius:999px; padding:6px 10px; font-size:12px; }
-        .chip.on { background:#0f9d58; color:#fff; border-color:#0f9d58; }
+        .chip {
+          border:1px solid #2c3a58; background:transparent; color:#a8b4c9;
+          border-radius:999px; padding:6px 10px; font-size:12px;
+        }
+        .chip.on {
+          color:#06161c;
+          background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
+          border-color: transparent;
+          box-shadow: 0 0 20px rgba(20,241,149,.25), 0 0 8px rgba(6,182,212,.3);
+        }
         .custom { display:flex; align-items:center; gap:6px; }
-        .custom input { width:60px; border:1px solid #e6e8eb; border-radius:8px; padding:6px 8px; text-align:right; font-size:12px; }
+        .custom input {
+          width:60px; border:1px solid var(--pcw-stroke); border-radius:8px;
+          padding:6px 8px; text-align:right; font-size:12px;
+          color:var(--pcw-text); background:#0f1b34;
+        }
+
         .meta { display:flex; justify-content:space-between; font-size:12px; margin-top:8px; }
-        .muted { color:#6b7280; }
-        .impact { color:#b42318; font-weight:600; }
-        .err { margin-top:8px; color:#b42318; font-size:13px; }
-        .swap { width:100%; margin-top:14px; background:#118a4e; color:#fff; border:none; border-radius:12px; padding:12px; font-weight:700; cursor:pointer; }
-        .swap:disabled { opacity:.6; cursor:not-allowed; }
+        .muted { color:var(--pcw-muted); }
+        .impact { color:#ff5a8a; font-weight:700; }
+
+        .err { margin-top:8px; color:#ff6b6b; font-size:13px; }
+
+        .swap {
+          width:100%; margin-top:14px;
+          background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
+          color:#06161c; border:none; border-radius:12px; padding:12px; font-weight:800; cursor:pointer;
+          box-shadow: 0 10px 25px rgba(20, 241, 149, .2);
+        }
+        .swap:hover { filter: brightness(1.05); }
+        .swap:disabled { opacity:.55; cursor:not-allowed; }
       `}</style>
     </div>
   );
@@ -1050,16 +1123,13 @@ async function computePriceImpactPct(opts: {
   const { chainId, srcToken, dstToken, amountInTokens, mainQuote, setPct } = opts;
 
   try {
-    // If trade size is 0 or invalid, nothing to compute.
     if (!amountInTokens || !Number.isFinite(amountInTokens) || amountInTokens <= 0) {
       setPct(null);
       return;
     }
 
-    // Choose a very small "epsilon" trade to approximate the mid-price (near-zero slippage).
-    // We cap between 1e-6 token and 0.01 token so it's not too tiny/huge across tokens.
+    // tiny baseline trade to approximate mid-price
     const epsTokenAmount = Math.max(Math.min(amountInTokens, 0.01), 0.000001);
-
     const epsBody = {
       chainId,
       src: srcToken.address,
@@ -1075,22 +1145,17 @@ async function computePriceImpactPct(opts: {
     const epsQ = (await r.json()) as QuoteResponse;
 
     if (!("ok" in epsQ) || !epsQ.ok) {
-      // If baseline fails, we simply show "—" instead of a wrong number.
       setPct(null);
       return;
     }
 
-    // Convert both quotes into token-space (not units).
     const epsOut = Number(epsQ.data.dstAmount) / 10 ** (dstToken.decimals || 18);
     const epsIn = epsTokenAmount;
-
-    const unitPriceBaseline = epsIn > 0 ? epsOut / epsIn : 0; // dst per 1 src with ~no slippage
+    const unitPriceBaseline = epsIn > 0 ? epsOut / epsIn : 0;
 
     const actualOut = Number(mainQuote.data.dstAmount) / 10 ** (dstToken.decimals || 18);
     const idealOut = unitPriceBaseline * amountInTokens;
 
-    // Price impact is how much worse the actual is vs the ideal, as a %
-    // Clamp to [0, 100] and guard math edge cases.
     let impact = 0;
     if (idealOut > 0) {
       impact = ((idealOut - actualOut) / idealOut) * 100;

@@ -2,7 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/* ---------------- Types ---------------- */
+/* =======================
+   Types
+======================= */
+
 type Token = {
   address: string;
   symbol: string;
@@ -10,9 +13,17 @@ type Token = {
   decimals: number;
   logoURI?: string;
 };
+
 type TokensByAddr = Record<string, Token>;
 
-type QuoteOk = { ok: true; data: { dstAmount: string; srcToken: Token; dstToken: Token } };
+type QuoteOk = {
+  ok: true;
+  data: {
+    srcToken: Token;
+    dstToken: Token;
+    dstAmount: string; // units
+  };
+};
 type QuoteFail = { ok: false; error: string };
 type QuoteResponse = QuoteOk | QuoteFail;
 
@@ -29,120 +40,46 @@ type SwapBuildOk = {
       maxFeePerGas?: any;
       maxPriorityFeePerGas?: any;
     };
+    // 1inch approve info often included alongside:
+    spender?: string;
   };
 };
 type SwapBuildFail = { ok: false; error: string };
 type SwapBuildResponse = SwapBuildOk | SwapBuildFail;
 
-/* --------------- Consts --------------- */
+/* =======================
+   Constants & helpers
+======================= */
+
 const fmt = (n: number, d = 6) =>
   new Intl.NumberFormat(undefined, { maximumFractionDigits: d }).format(n);
 const short = (a: string) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
 
 const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-
 const CHAINS: { id: number; name: string }[] = [
-  { id: 1, name: "Ethereum" },
   { id: 56, name: "BNB Chain" },
+  { id: 1, name: "Ethereum" },
   { id: 137, name: "Polygon" },
   { id: 42161, name: "Arbitrum" },
   { id: 10, name: "Optimism" },
   { id: 8453, name: "Base" },
   { id: 43114, name: "Avalanche" },
-  { id: 324, name: "zkSync Era" },
-  { id: 59144, name: "Linea" },
-  { id: 100, name: "Gnosis" },
-  { id: 250, name: "Fantom" },
 ];
 
-/* -------- chain params for add/switch (MetaMask) -------- */
-const RPC: Record<number, string[]> = {
-  1: ["https://rpc.ankr.com/eth"],
-  56: ["https://bsc-dataseed.binance.org/"],
-  137: ["https://polygon-rpc.com/"],
-  42161: ["https://arb1.arbitrum.io/rpc"],
-  10: ["https://mainnet.optimism.io"],
-  8453: ["https://mainnet.base.org"],
-  43114: ["https://api.avax.network/ext/bc/C/rpc"],
-  324: ["https://mainnet.era.zksync.io"],
-  59144: ["https://rpc.linea.build"],
-  100: ["https://rpc.gnosis.gateway.fm"],
-  250: ["https://rpc.ftm.tools/"],
-};
-const EXPLORER: Record<number, string> = {
-  1: "https://etherscan.io",
-  56: "https://bscscan.com",
-  137: "https://polygonscan.com",
-  42161: "https://arbiscan.io",
-  10: "https://optimistic.etherscan.io",
-  8453: "https://basescan.org",
-  43114: "https://snowtrace.io",
-  324: "https://explorer.zksync.io",
-  59144: "https://lineascan.build",
-  100: "https://gnosisscan.io",
-  250: "https://ftmscan.com",
-};
-const NATIVE_CCY: Record<number, { name: string; symbol: string; decimals: number }> = {
-  1: { name: "Ether", symbol: "ETH", decimals: 18 },
-  56: { name: "BNB", symbol: "BNB", decimals: 18 },
-  137: { name: "MATIC", symbol: "MATIC", decimals: 18 },
-  42161: { name: "Ether", symbol: "ETH", decimals: 18 },
-  10: { name: "Ether", symbol: "ETH", decimals: 18 },
-  8453: { name: "Ether", symbol: "ETH", decimals: 18 },
-  43114: { name: "AVAX", symbol: "AVAX", decimals: 18 },
-  324: { name: "Ether", symbol: "ETH", decimals: 18 },
-  59144: { name: "Ether", symbol: "ETH", decimals: 18 },
-  100: { name: "xDAI", symbol: "XDAI", decimals: 18 },
-  250: { name: "FTM", symbol: "FTM", decimals: 18 },
-};
-async function ensureChain(chainId: number) {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error("Wallet not found");
-  const targetHex = "0x" + chainId.toString(16);
-  const current = parseInt(await eth.request({ method: "eth_chainId" }), 16);
-  if (current === chainId) return;
-
-  try {
-    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
-  } catch (e: any) {
-    if (e?.code === 4902 && RPC[chainId] && NATIVE_CCY[chainId]) {
-      await eth.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: targetHex,
-            chainName: CHAINS.find((c) => c.id === chainId)?.name || `Chain ${chainId}`,
-            rpcUrls: RPC[chainId],
-            blockExplorerUrls: EXPLORER[chainId] ? [EXPLORER[chainId]] : [],
-            nativeCurrency: NATIVE_CCY[chainId],
-          },
-        ],
-      });
-      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
-    } else {
-      throw e;
-    }
-  }
-}
-
 const NATIVE_PRIORITIES: Record<number, string[]> = {
+  56: ["BNB", "WBNB"],
   1: ["ETH", "WETH"],
+  137: ["MATIC", "WMATIC", "POL", "WPOL"],
   42161: ["ETH", "WETH"],
   10: ["ETH", "WETH"],
   8453: ["ETH", "WETH"],
-  324: ["ETH", "WETH"],
-  59144: ["ETH", "WETH"],
-  56: ["BNB", "WBNB"],
-  137: ["MATIC", "WMATIC", "POL", "WPOL"],
   43114: ["AVAX", "WAVAX"],
-  250: ["FTM", "WFTM"],
-  100: ["XDAI", "WXDAI", "GNO", "WGNO"],
 };
 
 function isNativeSymbol(chainId: number, sym?: string) {
   if (!sym) return false;
-  const wanted = NATIVE_PRIORITIES[chainId] || [];
-  return wanted.includes(sym.toUpperCase());
+  const set = NATIVE_PRIORITIES[chainId] || [];
+  return set.includes(sym.toUpperCase());
 }
 function asNativeToken(chainId: number, base?: Token): Token | undefined {
   if (!base) return undefined;
@@ -156,232 +93,318 @@ function asNativeToken(chainId: number, base?: Token): Token | undefined {
 }
 const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test(s.trim());
 
-/* ---------- Server API: read ERC-20 meta (works on all EVM chains) ---------- */
-async function readErc20MetaViaRpc(chainId: number, address: string): Promise<Token | null> {
+/** 1inch v6 Spender fallbacks (in case /spender endpoint isn’t proxied) */
+const ONE_INCH_V6_SPENDER: Record<number, string> = {
+  // Router v6: 0x1111111254EEB25477B68fb85Ed929f73A960582 on most chains
+  1: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  56: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  137: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  42161: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  10: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  8453: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  43114: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+};
+
+async function ensureChain(chainId: number) {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+  const targetHex = "0x" + chainId.toString(16);
+  const current = parseInt(await eth.request({ method: "eth_chainId" }), 16);
+  if (current === chainId) return;
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: targetHex }],
+    });
+  } catch (e: any) {
+    if (e?.code === 4902) {
+      throw new Error("Add the network in MetaMask, then try again.");
+    }
+    throw e;
+  }
+}
+
+/** Robust JSON parsing (avoids “<DOCTYPE … is not valid JSON” alerts) */
+async function safeJson<T = any>(r: Response): Promise<T | null> {
+  try {
+    const txt = await r.text();
+    if (!txt) return null;
+    const first = txt.trim()[0];
+    if (first !== "{" && first !== "[") return null;
+    return JSON.parse(txt);
+  } catch {
+    return null;
+  }
+}
+
+/* =======================
+   Server API helpers
+======================= */
+
+/** Read ERC-20 meta via your API (works cross-chain) */
+async function readErc20MetaViaRpc(
+  chainId: number,
+  address: string
+): Promise<Token | null> {
   const r = await fetch("/api/erc20meta", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ chainId, address }),
   });
   if (!r.ok) return null;
-  const j = await r.json();
+  const j = await safeJson(r);
   if (j?.ok && j?.token) return j.token as Token;
   return null;
 }
 
-/* ---------------- Token Picker ---------------- */
-function TokenPicker({
-  open,
-  onClose,
-  tokens,
-  onSelect,
-  onLoadByAddress,
-  chainId,
-}: {
-  open: boolean;
-  onClose: () => void;
-  tokens?: TokensByAddr;
-  onSelect: (t: Token) => void;
-  onLoadByAddress: (addr: string) => Promise<void>;
-  chainId: number;
-}) {
-  const [q, setQ] = useState("");
-  const [loadingCustom, setLoadingCustom] = useState(false);
-  const [customErr, setCustomErr] = useState<string | null>(null);
+/** Get 1inch spender (fallbacks to constant if route not present) */
+async function getSpender(chainId: number): Promise<string> {
+  try {
+    const r = await fetch(`/api/oneinch/spender?chainId=${chainId}`);
+    const j = await safeJson<{ address: string }>(r);
+    if (j?.address && isAddress(j.address)) return j.address;
+  } catch {}
+  return ONE_INCH_V6_SPENDER[chainId] || ONE_INCH_V6_SPENDER[1];
+}
 
-  const list = useMemo(() => {
-    if (!tokens) return [];
-    const arr = Object.values(tokens);
-    if (!q.trim() || isAddress(q.trim())) return arr.slice(0, 400);
-    const s = q.trim().toLowerCase();
-    return arr
-      .filter(
-        (t) =>
-          t.symbol?.toLowerCase().includes(s) ||
-          t.name?.toLowerCase().includes(s) ||
-          t.address?.toLowerCase() === s
-      )
-      .slice(0, 400);
-  }, [tokens, q]);
+/** App token list (your proxied 1inch tokens) */
+async function fetchTokens(chainId: number): Promise<TokensByAddr> {
+  const r = await fetch(`/api/oneinch/tokens?chainId=${chainId}`);
+  const j = await safeJson(r);
+  let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
+  if (!map && Array.isArray(j)) {
+    map = {};
+    (j as any[]).forEach((t: any) => {
+      map![String(t.address).toLowerCase()] = t;
+    });
+  }
+  const norm: TokensByAddr = {};
+  if (!map) return norm;
+  for (const [kRaw, tRaw] of Object.entries(map)) {
+    const k = kRaw.toLowerCase();
+    const t: any = { ...tRaw };
+    t.address = String(t.address);
+    if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
+    norm[k] = t as Token;
+  }
+  return norm;
+}
 
-  const qIsAddr = isAddress(q.trim());
+/* =======================
+   Wallet-level helpers
+======================= */
 
-  useEffect(() => {
-    let stop = false;
-    (async () => {
-      if (!qIsAddr) return;
-      const addrL = q.trim().toLowerCase();
-      if (tokens && tokens[addrL]) {
-        onSelect(tokens[addrL]);
-        return;
-      }
-      setLoadingCustom(true);
-      setCustomErr(null);
-      try {
-        await onLoadByAddress(addrL);
-        if (!stop) setQ("");
-      } catch (e: any) {
-        if (!stop) setCustomErr(e?.message || "Failed to load token");
-      } finally {
-        if (!stop) setLoadingCustom(false);
-      }
-    })();
-    return () => {
-      stop = true;
-    };
-  }, [qIsAddr, q, onLoadByAddress, onSelect, tokens]);
+function toUnits(amount: string, decimals: number): string {
+  const [i, f = ""] = (amount || "0").split(".");
+  const cleanI = i.replace(/\D/g, "") || "0";
+  const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
+  const s =
+    BigInt(cleanI) * (BigInt(10) ** BigInt(decimals)) + BigInt(cleanF || "0");
+  return s.toString();
+}
 
-  if (!open) return null;
+async function readTokenBalance(account: string, token: Token): Promise<number> {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  // Native
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
+    const hexBal: string = await eth.request({
+      method: "eth_getBalance",
+      params: [account, "latest"],
+    });
+    const wei = BigInt(hexBal || "0x0");
+    return Number(wei) / 10 ** (token.decimals || 18);
+  }
+
+  // ERC-20 balanceOf(address)
+  const selector = "0x70a08231";
+  const addr = account.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + addr;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  const raw = BigInt(hex || "0x0");
+  return Number(raw) / 10 ** (token.decimals || 18);
+}
+
+/** Read allowance(owner, spender) with eth_call */
+async function readAllowance(
+  owner: string,
+  spender: string,
+  token: Token
+): Promise<bigint> {
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) return BigInt(2) ** BigInt(255);
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  const selector = "0xdd62ed3e"; // allowance(address,address)
+  const a = owner.replace(/^0x/, "").padStart(64, "0");
+  const s = spender.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + a + s;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  return BigInt(hex || "0x0");
+}
+
+/** Build & send approve tx (unlimited) */
+async function approveUnlimited(
+  chainId: number,
+  owner: string,
+  token: Token,
+  spender: string
+) {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+  await ensureChain(chainId);
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) return;
+
+  // try proxy first (if your backend exposes approve-tx)
+  try {
+    const r = await fetch("/api/oneinch/approve/transaction", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainId,
+        tokenAddress: token.address,
+        amount: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      }),
+    });
+    const j = await safeJson<any>(r);
+    if (j?.to && j?.data) {
+      const txParams = { from: owner, to: j.to, data: j.data, value: "0x0" };
+      await eth.request({ method: "eth_sendTransaction", params: [txParams] });
+      return;
+    }
+  } catch {
+    // fall back to raw ERC-20 approve
+  }
+
+  // fallback: raw approve(spender, max)
+  const approveSel = "0x095ea7b3";
+  const max =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  const data =
+    approveSel +
+    spender.replace(/^0x/, "").padStart(64, "0") +
+    max;
+
+  const txParams = { from: owner, to: token.address, data, value: "0x0" };
+  await eth.request({ method: "eth_sendTransaction", params: [txParams] });
+}
+
+/* =======================
+   Price helpers (USD)
+======================= */
+
+/** Find USDC on current chain from token list */
+function pickUSDC(map: TokensByAddr): Token | undefined {
+  const vals = Object.values(map);
   return (
-    <div className="picker-wrap" onClick={onClose}>
-      <div className="picker" onClick={(e) => e.stopPropagation()}>
-        <div className="picker-top">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name / symbol / contract…"
-          />
-          <button onClick={onClose}>Close</button>
-        </div>
-
-        {qIsAddr && (
-          <div className="custom-load">
-            <div className="custom-left">
-              <div className="custom-caption">
-                Contract on {CHAINS.find((c) => c.id === chainId)?.name}:
-              </div>
-              <code className="custom-code">{q.trim()}</code>
-            </div>
-            <div className="custom-right">
-              <button
-                disabled={loadingCustom}
-                onClick={async () => {
-                  setLoadingCustom(true);
-                  setCustomErr(null);
-                  try {
-                    await onLoadByAddress(q.trim());
-                    setQ("");
-                  } catch (e: any) {
-                    setCustomErr(e?.message || "Failed to load token");
-                  } finally {
-                    setLoadingCustom(false);
-                  }
-                }}
-              >
-                {loadingCustom ? "Loading…" : "Add token from chain"}
-              </button>
-              {customErr && <div className="err">{customErr}</div>}
-            </div>
-          </div>
-        )}
-
-        <div className="picker-list">
-          {tokens ? (
-            list.length ? (
-              list.map((t) => (
-                <button
-                  key={t.address + t.symbol}
-                  className="picker-row"
-                  onClick={() => (onSelect(t), onClose())}
-                >
-                  <div className="logo">
-                    {t.logoURI ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={t.logoURI} alt={t.symbol} />
-                    ) : (
-                      <span className="dot" />
-                    )}
-                  </div>
-                  <div className="pick-main">
-                    <div className="pick-symbol">{t.symbol}</div>
-                    <div className="pick-name">{t.name}</div>
-                  </div>
-                  <div className="pick-addr">{short(t.address)}</div>
-                </button>
-              ))
-            ) : (
-              <div className="picker-empty">No results.</div>
-            )
-          ) : (
-            <div className="picker-empty">Loading tokens…</div>
-          )}
-        </div>
-      </div>
-
-      <style jsx>{`
-        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
-        .picker { width:600px; max-width:92vw; background:#0f1b34; color:#e6eaf2; border:1px solid #24304a; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.35); overflow:hidden; }
-
-        .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #24304a; }
-        .picker-top input { flex:1; border:1px solid #24304a; background:#0c162c; color:#e6eaf2; border-radius:10px; padding:10px 12px; }
-        .picker-top button { border:1px solid #24304a; border-radius:10px; padding:8px 12px; background:#142449; color:#e6eaf2; }
-
-        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #24304a; flex-wrap:wrap; }
-        .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
-        .custom-caption { white-space:nowrap; color:#a8b4c9; }
-        .custom-code { background:#0c162c; border:1px solid #24304a; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; color:#e6eaf2; }
-        .custom-right { display:flex; align-items:center; gap:8px; }
-        .custom-load button { border:1px solid #18d29f44; border-radius:10px; padding:6px 10px; background:#18d29f1a; color:#14f195; }
-
-        .picker-list { max-height:60vh; overflow:auto; }
-        .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #1d2a44; text-align:left; }
-        .picker-row:hover { background:#0c162c; }
-        .logo img { width:28px; height:28px; border-radius:50%; }
-        .dot { width:10px; height:10px; background:#64748b; border-radius:50%; display:inline-block; }
-        .pick-symbol { font-weight:700; color:#e6eaf2; }
-        .pick-name { font-size:12px; color:#a8b4c9; }
-        .pick-addr { font-size:11px; color:#7f8aa3; }
-        .picker-empty { padding:16px; color:#a8b4c9; font-size:14px; }
-        .err { color:#ff6b6b; font-size:12px; }
-      `}</style>
-    </div>
+    vals.find((t) => (t.symbol || "").toUpperCase() === "USDC" && t.decimals === 6) ||
+    vals.find((t) => (t.symbol || "").toUpperCase() === "USDC") ||
+    vals.find((t) => (t.name || "").toLowerCase().includes("usd coin")) ||
+    undefined
   );
 }
 
-/* ---------------- Page ---------------- */
+/** Mini-quote using your quote route; returns dstAmount as number of tokens */
+async function miniQuoteTokens(opts: {
+  chainId: number;
+  src: Token;
+  dst: Token;
+  amountTokens: number;
+}): Promise<number | null> {
+  const { chainId, src, dst, amountTokens } = opts;
+  try {
+    const r = await fetch("/api/oneinch/quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainId,
+        src: src.address,
+        dst: dst.address,
+        amount: toUnits(String(amountTokens), src.decimals),
+      }),
+    });
+    const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+    if (!j || !("ok" in j) || !j.ok) return null;
+    const out = Number(j.data.dstAmount) / 10 ** (j.data.dstToken.decimals || 18);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** USD value for `tkn` (by quoting ~1 token to USDC). */
+async function tokenUsdPrice(
+  chainId: number,
+  tkn: Token,
+  usdc: Token
+): Promise<number | null> {
+  // if already USDC
+  if ((tkn.symbol || "").toUpperCase() === "USDC") return 1;
+  // small epsilon to avoid routing edge cases on exact 1
+  const eps = Math.pow(10, -Math.min(6, tkn.decimals)) * 10;
+  const out = await miniQuoteTokens({
+    chainId,
+    src: tkn,
+    dst: usdc,
+    amountTokens: eps,
+  });
+  if (out == null) return null;
+  return out / eps;
+}
+
+/* =======================
+   UI Component
+======================= */
+
 export default function Page() {
-  // wallet
+  /* Wallet */
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [chainId, setChainId] = useState<number>(56); // default BNB
 
-  // tokens
+  /* Tokens */
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
   const [srcToken, setSrcToken] = useState<Token | undefined>(undefined);
   const [dstToken, setDstToken] = useState<Token | undefined>(undefined);
   const [pickSrcOpen, setPickSrcOpen] = useState(false);
   const [pickDstOpen, setPickDstOpen] = useState(false);
 
-  // which side the user is editing: "src" (top) or "dst" (bottom)
+  /* Editing */
   const [editSide, setEditSide] = useState<"src" | "dst">("src");
+  const [amountIn, setAmountIn] = useState<string>("1");
+  const [amountOut, setAmountOut] = useState<string>("");
+  const [computedInFromOut, setComputedInFromOut] = useState<string>("0");
 
-  // amounts as text
-  const [amountIn, setAmountIn] = useState<string>("1");      // user edits when editSide==='src'
-  const [amountOut, setAmountOut] = useState<string>("");     // user edits when editSide==='dst'
-  const [computedInFromOut, setComputedInFromOut] = useState<string>("0"); // shown in top when editing bottom
-
-  // slippage
-  const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
+  /* Slippage */
+  const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">(
+    "market"
+  );
   const [customSlip, setCustomSlip] = useState<string>("");
 
-  // quote + USD
+  /* Quote + USD */
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
+
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
 
-  // balances
+  /* Balances */
   const [srcBal, setSrcBal] = useState<number | null>(null);
   const [dstBal, setDstBal] = useState<number | null>(null);
 
-  // NEW: price impact state (% as a number, e.g. 0.27 means 0.27%)
-  const [priceImpactPct, setPriceImpactPct] = useState<number | null>(null);
-
-  // NEW: minimum trade guard (in USD)
-  const MIN_TRADE_USD = 2; // tweak to 3/5 if you prefer
+  /* Spender */
+  const [spender, setSpender] = useState<string | null>(null);
 
   const debounceRef = useRef<number | null>(null);
+
   const bps = useMemo(
     () =>
       slipMode === "slow"
@@ -394,12 +417,7 @@ export default function Page() {
     [slipMode, customSlip]
   );
 
-  // computed flag: is the current trade too small?
-  const tooSmall = useMemo(() => {
-    return (payUsd ?? 0) > 0 && (payUsd as number) < MIN_TRADE_USD;
-  }, [payUsd, MIN_TRADE_USD]);
-
-  /* ---- wallet ---- */
+  /* Wallet connect */
   async function connect() {
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
@@ -409,85 +427,57 @@ export default function Page() {
     const id = parseInt(hexId, 16);
     setWalletChainId(id);
     setChainId((prev) => prev || id);
+
     eth.removeAllListeners?.("accountsChanged");
     eth.removeAllListeners?.("chainChanged");
     eth.on?.("accountsChanged", (a: string[]) => setAccount(a?.[0] ?? null));
-    eth.on?.("chainChanged", (hex: string) => setWalletChainId(parseInt(hex, 16) || null));
+    eth.on?.("chainChanged", (hex: string) =>
+      setWalletChainId(parseInt(hex, 16) || null)
+    );
   }
   function disconnect() {
     setAccount(null);
   }
 
-  // switch chain in wallet when UI chain changes
+  /* Switch wallet chain if user changes in UI */
   useEffect(() => {
     (async () => {
       try {
         if (walletChainId == null || walletChainId === chainId) return;
         await ensureChain(chainId);
       } catch (e: any) {
-        console.warn("chain switch/add failed:", e?.message || e);
+        console.warn("chain switch failed:", e?.message || e);
       }
     })();
   }, [chainId, walletChainId]);
 
-  /* ---- tokens fetch ---- */
-  async function fetchTokens(cid: number): Promise<TokensByAddr> {
-    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
-    const j = await r.json();
-    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
-    if (!map && Array.isArray(j)) {
-      map = {};
-      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
-    }
-    if (!map) map = {};
-    const norm: TokensByAddr = {};
-    for (const [kRaw, tRaw] of Object.entries(map)) {
-      const k = kRaw.toLowerCase();
-      const t: any = { ...tRaw };
-      t.address = String(t.address);
-      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
-      norm[k] = t as Token;
-    }
-    return norm;
-  }
-
-  function pickNative(map: TokensByAddr): Token | undefined {
-    const vals = Object.values(map);
-    if (map[NATIVE.toLowerCase()]) return asNativeToken(chainId, map[NATIVE.toLowerCase()]);
-    const wanted = NATIVE_PRIORITIES[chainId] || [];
-    for (const sym of wanted) {
-      const hit = vals.find((t) => (t.symbol || "").toUpperCase() === sym);
-      if (hit) return asNativeToken(chainId, hit);
-    }
-    const fuzzy = vals.find((t) =>
-      /eth|weth|bnb|wbnb|matic|wmatic|avax|wavax|ftm|wftm|xdai|wxdai|gno|wgno/i.test(
-        (t.symbol || "") + " " + (t.name || "")
-      )
-    );
-    return fuzzy ? asNativeToken(chainId, fuzzy) : undefined;
-  }
-  function pickUSDC(map: TokensByAddr): Token | undefined {
-    const vals = Object.values(map);
-    return (
-      vals.find((t) => (t.symbol || "").toUpperCase() === "USDC" && t.decimals === 6) ||
-      vals.find((t) => (t.symbol || "").toUpperCase() === "USDC") ||
-      vals.find((t) => (t.name || "").toLowerCase().includes("usd coin")) ||
-      vals[1]
-    );
-  }
-
+  /* Load tokens & spender on chain change */
   useEffect(() => {
     let stop = false;
     setTokens(undefined);
     setSrcToken(undefined);
     setDstToken(undefined);
+    setSpender(null);
     (async () => {
       try {
         const map = await fetchTokens(chainId);
         if (stop) return;
         setTokens(map);
-        setSrcToken(pickNative(map) || Object.values(map)[0]);
-        setDstToken(pickUSDC(map) || Object.values(map)[1]);
+
+        const vals = Object.values(map);
+        const nat =
+          (NATIVE.toLowerCase() in map && asNativeToken(chainId, map[NATIVE.toLowerCase()])) ||
+          (vals.find((t) => isNativeSymbol(chainId, t.symbol)) &&
+            asNativeToken(chainId, vals.find((t) => isNativeSymbol(chainId, t.symbol))!)) ||
+          undefined;
+
+        const usdc = pickUSDC(map);
+
+        setSrcToken(nat || vals[0]);
+        setDstToken(usdc || vals.find((v) => v !== (nat || vals[0])) || vals[1]);
+
+        const sp = await getSpender(chainId);
+        setSpender(sp);
       } catch (e) {
         console.error(e);
       }
@@ -500,136 +490,25 @@ export default function Page() {
   function onPickSrc(t: Token) {
     if (isNativeSymbol(chainId, t.symbol) || t.address.toLowerCase() === NATIVE.toLowerCase()) {
       const nat = asNativeToken(chainId, t);
-      if (nat) setSrcToken(nat);
-      else setSrcToken(t);
-    } else setSrcToken(t);
+      setSrcToken(nat || t);
+    } else {
+      setSrcToken(t);
+    }
   }
   function onPickDst(t: Token) {
     setDstToken(t);
   }
 
-  /* ---- Add custom by address ---- */
-  async function loadCustomAddress(addr: string) {
-    const a = addr.trim().toLowerCase();
-    if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
-    const meta = await readErc20MetaViaRpc(chainId, a);
-    if (!meta) throw new Error("Could not read token (check network/contract)");
-    setTokens((prev) => {
-      const next = { ...(prev || {}) };
-      next[a] = {
-        ...meta,
-        logoURI: meta.logoURI || `https://tokens.1inch.io/${chainId}/${a}.png`,
-      };
-      return next;
-    });
-    setSrcToken((s) => s || (meta as Token));
-  }
-
-  /* =========== QUOTES (two directions) =========== */
+  /* Quotes both directions with debounce */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
 
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
       setQuoting(true);
       setQuoteErr(null);
-      setPriceImpactPct(null); // reset while we recompute
       try {
         if (editSide === "src") {
-          // normal: src -> dst for amountIn
-          const body = {
-            chainId,
-            src: srcToken.address,
-            dst: dstToken.address,
-            amount: toUnits(amountIn || "0", srcToken.decimals),
-          };
-          const r = await fetch("/api/oneinch/quote", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const j = (await r.json()) as QuoteResponse;
-          setQuote(j);
-          if (!("ok" in j) || !j.ok) {
-            setQuoteErr((j as any).error || "quote failed");
-          } else {
-            // --- NEW: compute price impact vs tiny trade (approx. no-slippage unit price)
-            await computePriceImpactPct({
-              chainId,
-              srcToken,
-              dstToken,
-              amountInTokens: Number(amountIn || "0"),
-              mainQuote: j as QuoteOk,
-              setPct: setPriceImpactPct,
-            });
-          }
-        } else {
-          // reverse: user typed desired OUT; estimate needed IN by quoting dst -> src
-          const body = {
-            chainId,
-            src: dstToken.address,
-            dst: srcToken.address,
-            amount: toUnits(amountOut || "0", dstToken.decimals),
-          };
-          const r = await fetch("/api/oneinch/quote", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const j = (await r.json()) as QuoteResponse;
-          if ("ok" in j && j.ok) {
-            const needIn = Number(j.data.dstAmount) / 10 ** (srcToken.decimals || 18);
-            setComputedInFromOut(needIn ? String(needIn) : "0");
-            // also set a forward-looking quote so the bottom shows a clean number too
-            const forward = await fetch("/api/oneinch/quote", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                chainId,
-                src: srcToken.address,
-                dst: dstToken.address,
-                amount: toUnits(String(needIn || 0), srcToken.decimals),
-              }),
-            });
-            const fwd = (await forward.json()) as QuoteResponse;
-            setQuote(fwd);
-            if ("ok" in fwd && fwd.ok) {
-              await computePriceImpactPct({
-                chainId,
-                srcToken,
-                dstToken,
-                amountInTokens: needIn || 0,
-                mainQuote: fwd as QuoteOk,
-                setPct: setPriceImpactPct,
-              });
-            } else {
-              setPriceImpactPct(null);
-            }
-          } else {
-            setComputedInFromOut("0");
-            setQuote(j);
-            setQuoteErr((j as any).error || "quote failed");
-            setPriceImpactPct(null);
-          }
-        }
-      } catch (e: any) {
-        setQuote(null);
-        setQuoteErr(e?.message || String(e));
-        setPriceImpactPct(null);
-      } finally {
-        setQuoting(false);
-      }
-    }, 250);
-  }, [editSide, chainId, srcToken?.address, dstToken?.address, amountIn, amountOut, srcToken?.decimals, dstToken?.decimals]);
-
-  /* ---- Simple USD reflections ---- */
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!srcToken || !dstToken) return setPayUsd(null);
-
-        if (editSide === "src") {
-          if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn || "0"));
           const r = await fetch("/api/oneinch/quote", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -640,39 +519,145 @@ export default function Page() {
               amount: toUnits(amountIn || "0", srcToken.decimals),
             }),
           });
-          const j = (await r.json()) as QuoteResponse;
-          if ((j as QuoteOk).ok) {
-            const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
-            setPayUsd(out);
-          } else setPayUsd(null);
+          const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+          if (!j || !("ok" in j) || !j.ok) {
+            setQuote(j || { ok: false, error: "quote failed" });
+            setQuoteErr((j as any)?.error || "quote failed");
+          } else {
+            setQuote(j);
+          }
         } else {
-          setPayUsd(Number(amountOut || "0"));
+          // user edits desired OUT; estimate required IN
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chainId,
+              src: dstToken.address,
+              dst: srcToken.address,
+              amount: toUnits(amountOut || "0", dstToken.decimals),
+            }),
+          });
+          const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+          if (!j || !("ok" in j) || !j.ok) {
+            setQuote(j || { ok: false, error: "quote failed" });
+            setQuoteErr((j as any)?.error || "quote failed");
+            setComputedInFromOut("0");
+          } else {
+            const needIn =
+              Number(j.data.dstAmount) / 10 ** (srcToken.decimals || 18);
+            setComputedInFromOut(needIn ? String(needIn) : "0");
+
+            // also keep a forward quote for UI output
+            const f = await fetch("/api/oneinch/quote", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                chainId,
+                src: srcToken.address,
+                dst: dstToken.address,
+                amount: toUnits(String(needIn || 0), srcToken.decimals),
+              }),
+            });
+            const fwd = (await safeJson<QuoteResponse>(f)) as QuoteResponse | null;
+            setQuote(fwd || j);
+          }
+        }
+      } catch (e: any) {
+        setQuote({ ok: false, error: e?.message || String(e) });
+        setQuoteErr(e?.message || String(e));
+      } finally {
+        setQuoting(false);
+      }
+    }, 220);
+  }, [
+    editSide,
+    chainId,
+    srcToken?.address,
+    dstToken?.address,
+    amountIn,
+    amountOut,
+    srcToken?.decimals,
+    dstToken?.decimals,
+  ]);
+
+  /* USD reflections (robust & symmetric) */
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!srcToken || !dstToken || !tokens) {
+          setPayUsd(null);
+          setRecvUsd(null);
+          return;
+        }
+        const usdc = pickUSDC(tokens);
+        if (!usdc) {
+          setPayUsd(null);
+          setRecvUsd(null);
+          return;
+        }
+
+        if (editSide === "src") {
+          const ain = Number(amountIn || "0");
+          if (!ain) {
+            setPayUsd(0);
+            setRecvUsd(0);
+            return;
+          }
+          const srcUsd = await tokenUsdPrice(chainId, srcToken, usdc);
+          const outTokens =
+            quote && "ok" in quote && quote.ok
+              ? Number(quote.data.dstAmount) / 10 ** dstToken.decimals
+              : 0;
+          const dstUsd = await tokenUsdPrice(chainId, dstToken, usdc);
+
+          setPayUsd(srcUsd != null ? ain * srcUsd : null);
+          setRecvUsd(dstUsd != null ? outTokens * dstUsd : null);
+        } else {
+          // editing desired OUT
+          const aout = Number(amountOut || "0");
+          if (!aout) {
+            setRecvUsd(0);
+            setPayUsd(0);
+            return;
+          }
+          const dstUsd = await tokenUsdPrice(chainId, dstToken, usdc);
+          const needIn = Number(computedInFromOut || "0");
+          const srcUsd = await tokenUsdPrice(chainId, srcToken, usdc);
+
+          setRecvUsd(dstUsd != null ? aout * dstUsd : null);
+          setPayUsd(srcUsd != null ? needIn * srcUsd : null);
         }
       } catch {
         setPayUsd(null);
-      }
-    })();
-
-    (async () => {
-      try {
-        if (!dstToken || !quote || !("ok" in quote) || !quote.ok) return setRecvUsd(null);
-        const out = Number(quote.data.dstAmount) / 10 ** (dstToken.decimals || 6);
-        setRecvUsd(out || null);
-      } catch {
         setRecvUsd(null);
       }
     })();
-  }, [editSide, chainId, srcToken, dstToken, amountIn, amountOut, quote]);
+  }, [
+    chainId,
+    tokens,
+    srcToken?.address,
+    dstToken?.address,
+    editSide,
+    amountIn,
+    amountOut,
+    computedInFromOut,
+    quote,
+  ]);
 
-  /* ---- Balances (direct RPC via wallet) ---- */
+  /* Balances */
   useEffect(() => {
     (async () => {
       try {
         if (!account || !srcToken) return setSrcBal(null);
-        try { await ensureChain(chainId); } catch {}
+        try {
+          await ensureChain(chainId);
+        } catch {}
         const bal = await readTokenBalance(account, srcToken);
         setSrcBal(bal);
-      } catch { setSrcBal(null); }
+      } catch {
+        setSrcBal(null);
+      }
     })();
   }, [account, chainId, srcToken?.address]);
 
@@ -680,21 +665,23 @@ export default function Page() {
     (async () => {
       try {
         if (!account || !dstToken) return setDstBal(null);
-        try { await ensureChain(chainId); } catch {}
+        try {
+          await ensureChain(chainId);
+        } catch {}
         const bal = await readTokenBalance(account, dstToken);
         setDstBal(bal);
-      } catch { setDstBal(null); }
+      } catch {
+        setDstBal(null);
+      }
     })();
   }, [account, chainId, dstToken?.address]);
 
-  /* ---- Build + Send ---- */
+  /* Swap */
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
-    if (tooSmall) return alert(`Min trade is about $${MIN_TRADE_USD} to avoid failed tiny swaps.`);
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
-
     try {
       await ensureChain(chainId);
     } catch (e: any) {
@@ -706,7 +693,8 @@ export default function Page() {
       if (typeof val === "object") {
         if (typeof (val as any).hex === "string") return (val as any).hex;
         if (typeof (val as any)._hex === "string") return (val as any)._hex;
-        if (typeof (val as any).toHexString === "function") return (val as any).toHexString();
+        if (typeof (val as any).toHexString === "function")
+          return (val as any).toHexString();
         if (typeof (val as any).toString === "function") {
           try {
             const s = (val as any).toString();
@@ -730,22 +718,38 @@ export default function Page() {
 
     try {
       const srcAmt = editSide === "src" ? amountIn : computedInFromOut;
-      const body = {
-        chainId,
-        from: account,
-        src: srcToken.address,
-        dst: dstToken.address,
-        amount: toUnits(srcAmt || "0", srcToken.decimals),
-        slippageBps: bps,
-      };
 
+      // 1) Ensure allowance if ERC-20
+      const sp = (spender && isAddress(spender)) ? spender! : await getSpender(chainId);
+      const needUnits = BigInt(toUnits(srcAmt || "0", srcToken.decimals));
+      const allowance = await readAllowance(account, sp, srcToken);
+      if (allowance < needUnits && srcToken.address.toLowerCase() !== NATIVE.toLowerCase()) {
+        await approveUnlimited(chainId, account, srcToken, sp);
+      }
+
+      // 2) Build swap
       const r = await fetch("/api/oneinch/swap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          chainId,
+          from: account,
+          src: srcToken.address,
+          dst: dstToken.address,
+          amount: toUnits(srcAmt || "0", srcToken.decimals),
+          slippageBps: bps,
+        }),
       });
-      const j = (await r.json()) as SwapBuildResponse;
-      if (!j.ok || !j.data?.tx) return alert((j as any)?.error || "Swap build failed");
+
+      const j = (await safeJson<SwapBuildResponse>(r)) as SwapBuildResponse | null;
+
+      if (!j || !j.ok || !j.data?.tx) {
+        // if router complains allowance again, surface message in a friendly way
+        const msg =
+          (j as any)?.error ||
+          "Swap build failed (router). If this mentions 'allowance', approve first then retry.";
+        return alert(msg);
+      }
 
       const raw: any = j.data.tx;
       const txParams: any = {
@@ -773,38 +777,34 @@ export default function Page() {
     }
   }
 
+  /* Derived values */
   const toAmount = useMemo(() => {
     if (!quote || !("ok" in quote) || !quote.ok) return "0.000000";
-    const out = Number(quote.data.dstAmount) / 10 ** (quote.data.dstToken.decimals || 6);
+    const out =
+      Number(quote.data.dstAmount) / 10 ** (quote.data.dstToken.decimals || 6);
     return out.toFixed(6);
   }, [quote]);
 
   const rateText = useMemo(() => {
-    if (!quote || !("ok" in quote) || !quote.ok || !srcToken || !dstToken) return "—";
-    const aIn = Number((editSide === "src" ? amountIn : computedInFromOut) || "0");
+    if (!quote || !("ok" in quote) || !quote.ok || !srcToken || !dstToken)
+      return "—";
+    const aIn = Number(
+      (editSide === "src" ? amountIn : computedInFromOut) || "0"
+    );
     const out = Number(quote.data.dstAmount) / 10 ** dstToken.decimals;
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
   }, [quote, amountIn, computedInFromOut, editSide, srcToken, dstToken]);
 
-  // --- NEW: human text for price impact
-  const priceImpactText = useMemo(() => {
-    if (priceImpactPct == null || !Number.isFinite(priceImpactPct)) return "—";
-    return `${priceImpactPct.toFixed(2)}%`;
-  }, [priceImpactPct]);
-
-  // MAX: uses src balance; for native leaves tiny gas buffer
+  /* UI Bits */
   const onMaxSrc = () => {
     if (srcBal == null || !srcToken) return;
     let max = srcBal;
-    const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
-    if (isNative) max = Math.max(0, max - 0.0003); // leave dust for gas
+    const isNat = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
+    if (isNat) max = Math.max(0, max - 0.0003);
     setEditSide("src");
     setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
   };
-  const onMaxDst = () => {
-    onMaxSrc();
-  };
-
+  const onMaxDst = () => onMaxSrc();
   const onFlip = () => {
     const a = srcToken;
     const b = dstToken;
@@ -812,9 +812,15 @@ export default function Page() {
     setDstToken(a);
   };
 
-  // values for the two inputs
-  const payInputValue = editSide === "src" ? amountIn : (computedInFromOut ? String(Number(computedInFromOut)) : "");
+  const payInputValue =
+    editSide === "src"
+      ? amountIn
+      : computedInFromOut
+      ? String(Number(computedInFromOut))
+      : "";
   const recvInputValue = editSide === "src" ? toAmount : amountOut;
+
+  /* ============ RENDER ============ */
 
   return (
     <div className="wrap">
@@ -834,6 +840,7 @@ export default function Page() {
                 </option>
               ))}
             </select>
+
             {account ? (
               <>
                 <span className="pill green">{short(account)}</span>
@@ -861,6 +868,7 @@ export default function Page() {
             )}
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
+
           <div className="amtBox">
             <div className="amtCol">
               <input
@@ -868,22 +876,32 @@ export default function Page() {
                 value={payInputValue}
                 inputMode="decimal"
                 onFocus={() => setEditSide("src")}
-                onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
+                onChange={(e) =>
+                  setAmountIn(e.target.value.replace(/[^\d.]/g, ""))
+                }
                 placeholder="0.0"
               />
-              <div className="fiat">{payUsd != null ? `~$${fmt(payUsd, 2)}` : "—"}</div>
+              <div className="fiat">
+                {payUsd != null ? `~$${fmt(payUsd, 2)}` : "—"}
+              </div>
             </div>
-            <button className="max" onClick={onMaxSrc}>MAX</button>
+            <button className="max" onClick={onMaxSrc}>
+              MAX
+            </button>
           </div>
         </div>
         <div className="metaRow">
           <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
-          <div className="bal">Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}</div>
+          <div className="bal">
+            Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}
+          </div>
         </div>
 
         {/* centered flip */}
         <div className="flip-wrap">
-          <button className="flip" onClick={onFlip} aria-label="Flip pay/receive">↑↓</button>
+          <button className="flip" onClick={onFlip} aria-label="Flip">
+            ↑↓
+          </button>
         </div>
 
         {/* You receive */}
@@ -898,6 +916,7 @@ export default function Page() {
             )}
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
+
           <div className="amtBox">
             <div className="amtCol">
               <input
@@ -905,49 +924,70 @@ export default function Page() {
                 value={recvInputValue}
                 inputMode="decimal"
                 onFocus={() => setEditSide("dst")}
-                onChange={(e) => setAmountOut(e.target.value.replace(/[^\d.]/g, ""))}
+                onChange={(e) =>
+                  setAmountOut(e.target.value.replace(/[^\d.]/g, ""))
+                }
                 placeholder="0.0"
               />
-              <div className="fiat">{recvUsd != null ? `~$${fmt(recvUsd, 2)}` : "—"}</div>
+              <div className="fiat">
+                {recvUsd != null ? `~$${fmt(recvUsd, 2)}` : "—"}
+              </div>
             </div>
-            <button className="max" onClick={onMaxDst}>MAX</button>
+            <button className="max" onClick={onMaxDst}>
+              MAX
+            </button>
           </div>
         </div>
         <div className="metaRow">
           <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
-          <div className="bal">Balance: {dstBal != null ? fmt(dstBal, 6) : "—"}</div>
+          <div className="bal">
+            Balance: {dstBal != null ? fmt(dstBal, 6) : "—"}
+          </div>
         </div>
 
         {/* Slippage */}
         <div className="slip">
           <span className="muted">Slippage</span>
           <div className="chips">
-            <button className={`chip ${slipMode === "slow" ? "on" : ""}`} onClick={() => setSlipMode("slow")}>
+            <button
+              className={`chip ${slipMode === "slow" ? "on" : ""}`}
+              onClick={() => setSlipMode("slow")}
+            >
               Slow
             </button>
-            <button className={`chip ${slipMode === "market" ? "on" : ""}`} onClick={() => setSlipMode("market")}>
+            <button
+              className={`chip ${slipMode === "market" ? "on" : ""}`}
+              onClick={() => setSlipMode("market")}
+            >
               Market
             </button>
-            <button className={`chip ${slipMode === "fast" ? "on" : ""}`} onClick={() => setSlipMode("fast")}>
+            <button
+              className={`chip ${slipMode === "fast" ? "on" : ""}`}
+              onClick={() => setSlipMode("fast")}
+            >
               Fast
             </button>
             <div className="custom">
-              <button className={`chip ${slipMode === "custom" ? "on" : ""}`} onClick={() => setSlipMode("custom")}>
+              <button
+                className={`chip ${slipMode === "custom" ? "on" : ""}`}
+                onClick={() => setSlipMode("custom")}
+              >
                 custom %
               </button>
               <input
                 value={customSlip}
                 placeholder={(bps / 100).toString()}
-                onChange={(e) => setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))}
+                onChange={(e) =>
+                  setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))
+                }
               />
             </div>
           </div>
         </div>
 
-        {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">Est. network fee: – <span className="impact">• Price impact: {priceImpactText}</span></div>
+          <div className="muted">Est. network fee: –</div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
@@ -955,229 +995,270 @@ export default function Page() {
         <button
           className="swap"
           onClick={onSwap}
-          disabled={!srcToken || !dstToken || quoting || tooSmall}
+          disabled={!srcToken || !dstToken || quoting}
         >
-          {tooSmall ? `Min ~$${MIN_TRADE_USD} to swap` : "Swap"}
+          Swap
         </button>
       </div>
 
-      {/* Pickers */}
-      <TokenPicker
-        open={pickSrcOpen}
-        onClose={() => setPickSrcOpen(false)}
-        tokens={tokens}
-        onSelect={onPickSrc}
-        onLoadByAddress={loadCustomAddress}
-        chainId={chainId}
-      />
-      <TokenPicker
-        open={pickDstOpen}
-        onClose={() => setPickDstOpen(false)}
-        tokens={tokens}
-        onSelect={onPickDst}
-        onLoadByAddress={loadCustomAddress}
-        chainId={chainId}
-      />
-
-      {/* ==== Dark Neon Card Styles (no logic changes) ==== */}
+      {/* Styles */}
       <style jsx>{`
-        .wrap { display:grid; place-items:center; min-height:100dvh; padding:24px; }
-
+        :global(html) {
+          --pcw-text: #e6eaf2;
+          --pcw-muted: #a8b4c9;
+          --pcw-card: #0b152b;
+          --pcw-stroke: #1d2a44;
+        }
+        .wrap {
+          display: grid;
+          place-items: center;
+          min-height: 100dvh;
+          padding: 24px;
+          background: radial-gradient(1200px 700px at 70% -10%, #123 0%, #091223 40%, #060c19 100%);
+        }
         .card {
-          width:560px; max-width:100%;
+          width: 560px;
+          max-width: 100%;
           color: var(--pcw-text);
           background: var(--pcw-card);
           border: 1px solid var(--pcw-stroke);
-          border-radius:16px;
-          padding:20px;
+          border-radius: 16px;
+          padding: 20px;
           backdrop-filter: blur(10px);
-          box-shadow: 0 10px 30px rgba(0,0,0,.35);
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
         }
-
-        .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-        .title { font-weight:800; font-size:20px; letter-spacing:.2px; color:var(--pcw-text); }
-        .right { display:flex; gap:8px; align-items:center; }
-
-        .sel, .btn, .link {
-          border:1px solid var(--pcw-stroke);
-          border-radius:10px;
-          background:#0f1b34;
-          color:var(--pcw-text);
-          padding:6px 10px; font-size:13px;
+        .head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
         }
-        .link { background:transparent; border-color:transparent; color:#9fd6ff; cursor:pointer; }
-        .link:hover { text-decoration:underline; }
-
-        .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #18d29f44; background:#18d29f1a; color:#14f195; }
-        .green { background:#18d29f1a; border-color:#18d29f44; }
-
-        .lbl { display:block; font-size:12px; color:var(--pcw-muted); margin-top:12px; margin-bottom:6px; }
-
-        .row {
-          display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center;
-          border:1px solid var(--pcw-stroke);
-          border-radius:12px; padding:10px 12px;
-          background: rgba(255,255,255,.02);
-        }
-        .token { display:flex; align-items:center; gap:8px; font-weight:700; color:var(--pcw-text); background:transparent; border:none; cursor:pointer; }
-        .token img { width:20px; height:20px; border-radius:999px; }
-        .dot { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
-
-        .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; color: var(--pcw-text); }
-        .amt::placeholder { color: #7f8aa3; }
-
-        .max {
-          border:1px solid var(--pcw-stroke);
-          border-radius:999px; padding:4px 8px; font-size:12px;
-          background: rgba(255,255,255,.04);
+        .title {
+          font-weight: 800;
+          font-size: 20px;
+          letter-spacing: 0.2px;
           color: var(--pcw-text);
         }
-
-        /* NEW: stack amount + ~$USD under each input */
-        .amtCol { display:flex; flex-direction:column; align-items:flex-end; }
-        .fiat { font-size:12px; line-height:1.1; margin-top:2px; color:#94a3b8; }
-        /* keep the MAX button aligned with the stacked amtCol */
-        .amtBox { align-items:flex-end; }
-
-        .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
-        .usd, .bal { font-size:12px; color:var(--pcw-muted); }
-
-        .flip-wrap { display:flex; justify-content:center; align-items:center; margin: 8px 0 10px; }
-        .flip {
-          width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:999px; border:1px solid var(--pcw-stroke);
-          background:#0f1b34;
-          box-shadow:0 2px 10px rgba(0,0,0,.25);
-          cursor:pointer; font-weight:700; line-height:1; color:var(--pcw-text);
+        .right {
+          display: flex;
+          gap: 8px;
+          align-items: center;
         }
-        .flip:hover { background:#132449; }
-
-        .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
-        .chips { display:flex; gap:8px; align-items:center; }
+        .sel,
+        .btn,
+        .link {
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 10px;
+          background: #0f1b34;
+          color: var(--pcw-text);
+          padding: 6px 10px;
+          font-size: 13px;
+        }
+        .link {
+          background: transparent;
+          border-color: transparent;
+          color: #9fd6ff;
+          cursor: pointer;
+        }
+        .link:hover {
+          text-decoration: underline;
+        }
+        .pill {
+          display: inline-block;
+          padding: 4px 8px;
+          border-radius: 999px;
+          border: 1px solid #18d29f44;
+          background: #18d29f1a;
+          color: #14f195;
+        }
+        .green {
+          background: #18d29f1a;
+          border-color: #18d29f44;
+        }
+        .lbl {
+          display: block;
+          font-size: 12px;
+          color: var(--pcw-muted);
+          margin-top: 12px;
+          margin-bottom: 6px;
+        }
+        .row {
+          display: grid;
+          grid-template-columns: auto 1fr;
+          gap: 10px;
+          align-items: center;
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 12px;
+          padding: 10px 12px;
+          background: rgba(255, 255, 255, 0.02);
+        }
+        .token {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 700;
+          color: var(--pcw-text);
+          background: transparent;
+          border: none;
+          cursor: pointer;
+        }
+        .token img {
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+        }
+        .dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #64748b;
+          display: inline-block;
+        }
+        .amtBox {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          justify-content: flex-end;
+        }
+        .amt {
+          text-align: right;
+          font-size: 18px;
+          border: none;
+          outline: none;
+          background: transparent;
+          color: var(--pcw-text);
+        }
+        .amt::placeholder {
+          color: #7f8aa3;
+        }
+        .max {
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 999px;
+          padding: 4px 8px;
+          font-size: 12px;
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--pcw-text);
+        }
+        .amtCol {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+        }
+        .fiat {
+          font-size: 12px;
+          line-height: 1.1;
+          margin-top: 2px;
+          color: #94a3b8;
+        }
+        .metaRow {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 4px;
+        }
+        .usd,
+        .bal {
+          font-size: 12px;
+          color: var(--pcw-muted);
+        }
+        .flip-wrap {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin: 8px 0 10px;
+        }
+        .flip {
+          width: 30px;
+          height: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          border: 1px solid var(--pcw-stroke);
+          background: #0f1b34;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+          cursor: pointer;
+          font-weight: 700;
+          line-height: 1;
+          color: var(--pcw-text);
+        }
+        .flip:hover {
+          background: #132449;
+        }
+        .slip {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-top: 14px;
+        }
+        .chips {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
         .chip {
-          border:1px solid #2c3a58; background:transparent; color:#a8b4c9;
-          border-radius:999px; padding:6px 10px; font-size:12px;
+          border: 1px solid #2c3a58;
+          background: transparent;
+          color: #a8b4c9;
+          border-radius: 999px;
+          padding: 6px 10px;
+          font-size: 12px;
         }
         .chip.on {
-          color:#06161c;
+          color: #06161c;
           background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
           border-color: transparent;
-          box-shadow: 0 0 20px rgba(20,241,149,.25), 0 0 8px rgba(6,182,212,.3);
+          box-shadow: 0 0 20px rgba(20, 241, 149, 0.25),
+            0 0 8px rgba(6, 182, 212, 0.3);
         }
-        .custom { display:flex; align-items:center; gap:6px; }
+        .custom {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
         .custom input {
-          width:60px; border:1px solid var(--pcw-stroke); border-radius:8px;
-          padding:6px 8px; text-align:right; font-size:12px;
-          color:var(--pcw-text); background:#0f1b34;
+          width: 60px;
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 8px;
+          padding: 6px 8px;
+          text-align: right;
+          font-size: 12px;
+          color: var(--pcw-text);
+          background: #0f1b34;
         }
-
-        .meta { display:flex; justify-content:space-between; font-size:12px; margin-top:8px; }
-        .muted { color:var(--pcw-muted); }
-        .impact { color:#ff5a8a; font-weight:700; }
-
-        .err { margin-top:8px; color:#ff6b6b; font-size:13px; }
-
+        .meta {
+          display: flex;
+          justify-content: space-between;
+          font-size: 12px;
+          margin-top: 8px;
+        }
+        .muted {
+          color: var(--pcw-muted);
+        }
+        .err {
+          margin-top: 8px;
+          color: #ff6b6b;
+          font-size: 13px;
+        }
         .swap {
-          width:100%; margin-top:14px;
+          width: 100%;
+          margin-top: 14px;
           background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
-          color:#06161c; border:none; border-radius:12px; padding:12px; font-weight:800; cursor:pointer;
-          box-shadow: 0 10px 25px rgba(20, 241, 149, .2);
+          color: #06161c;
+          border: none;
+          border-radius: 12px;
+          padding: 12px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 10px 25px rgba(20, 241, 149, 0.2);
         }
-        .swap:hover { filter: brightness(1.05); }
-        .swap:disabled { opacity:.55; cursor:not-allowed; }
+        .swap:hover {
+          filter: brightness(1.05);
+        }
+        .swap:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
       `}</style>
     </div>
   );
-}
-
-/* -------------- utils -------------- */
-function toUnits(amount: string, decimals: number): string {
-  const [i, f = ""] = (amount || "0").split(".");
-  const cleanI = i.replace(/\D/g, "") || "0";
-  const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
-  const s = BigInt(cleanI) * BigInt(10) ** BigInt(decimals) + BigInt(cleanF || "0");
-  return s.toString();
-}
-
-/* ---- minimal balance readers via wallet RPC ---- */
-async function readTokenBalance(account: string, token: Token): Promise<number> {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error("Wallet not found");
-
-  // Native coin
-  if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
-    const hexBal: string = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
-    const wei = BigInt(hexBal);
-    return Number(wei) / 10 ** (token.decimals || 18);
-  }
-
-  // ERC-20 balanceOf(address)
-  const selector = "0x70a08231";
-  const addr = account.replace(/^0x/, "").padStart(64, "0");
-  const data = selector + addr;
-  const hex: string = await eth.request({
-    method: "eth_call",
-    params: [{ to: token.address, data }, "latest"],
-  });
-  const raw = BigInt(hex || "0x0");
-  return Number(raw) / 10 ** (token.decimals || 18);
-}
-
-/* ================== NEW: price impact helper ================== */
-async function computePriceImpactPct(opts: {
-  chainId: number;
-  srcToken: Token;
-  dstToken: Token;
-  amountInTokens: number;         // amount user is actually trading (in tokens, not units)
-  mainQuote: QuoteOk;             // the real quote for the trade size
-  setPct: (n: number | null) => void;
-}) {
-  const { chainId, srcToken, dstToken, amountInTokens, mainQuote, setPct } = opts;
-
-  try {
-    if (!amountInTokens || !Number.isFinite(amountInTokens) || amountInTokens <= 0) {
-      setPct(null);
-      return;
-    }
-
-    // tiny baseline trade to approximate mid-price
-    const epsTokenAmount = Math.max(Math.min(amountInTokens, 0.01), 0.000001);
-    const epsBody = {
-      chainId,
-      src: srcToken.address,
-      dst: dstToken.address,
-      amount: toUnits(String(epsTokenAmount), srcToken.decimals),
-    };
-
-    const r = await fetch("/api/oneinch/quote", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(epsBody),
-    });
-    const epsQ = (await r.json()) as QuoteResponse;
-
-    if (!("ok" in epsQ) || !epsQ.ok) {
-      setPct(null);
-      return;
-    }
-
-    const epsOut = Number(epsQ.data.dstAmount) / 10 ** (dstToken.decimals || 18);
-    const epsIn = epsTokenAmount;
-    const unitPriceBaseline = epsIn > 0 ? epsOut / epsIn : 0;
-
-    const actualOut = Number(mainQuote.data.dstAmount) / 10 ** (dstToken.decimals || 18);
-    const idealOut = unitPriceBaseline * amountInTokens;
-
-    let impact = 0;
-    if (idealOut > 0) {
-      impact = ((idealOut - actualOut) / idealOut) * 100;
-    }
-    if (!Number.isFinite(impact) || impact < 0) impact = 0;
-    if (impact > 100) impact = 100;
-
-    setPct(impact);
-  } catch {
-    setPct(null);
-  }
 }

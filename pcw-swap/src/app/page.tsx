@@ -2,7 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/* ---------------- Types ---------------- */
+/* =======================
+   Types
+======================= */
+
 type Token = {
   address: string;
   symbol: string;
@@ -12,7 +15,14 @@ type Token = {
 };
 type TokensByAddr = Record<string, Token>;
 
-type QuoteOk = { ok: true; data: { dstAmount: string; srcToken: Token; dstToken: Token } };
+type QuoteOk = {
+  ok: true;
+  data: {
+    srcToken: Token;
+    dstToken: Token;
+    dstAmount: string; // units
+  };
+};
 type QuoteFail = { ok: false; error: string };
 type QuoteResponse = QuoteOk | QuoteFail;
 
@@ -29,120 +39,46 @@ type SwapBuildOk = {
       maxFeePerGas?: any;
       maxPriorityFeePerGas?: any;
     };
+    spender?: string;
+    allowanceTarget?: string;
   };
 };
 type SwapBuildFail = { ok: false; error: string };
 type SwapBuildResponse = SwapBuildOk | SwapBuildFail;
 
-/* --------------- Consts --------------- */
+/* =======================
+   Constants & helpers
+======================= */
+
 const fmt = (n: number, d = 6) =>
   new Intl.NumberFormat(undefined, { maximumFractionDigits: d }).format(n);
 const short = (a: string) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
 
 const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-
 const CHAINS: { id: number; name: string }[] = [
-  { id: 1, name: "Ethereum" },
   { id: 56, name: "BNB Chain" },
+  { id: 1, name: "Ethereum" },
   { id: 137, name: "Polygon" },
   { id: 42161, name: "Arbitrum" },
   { id: 10, name: "Optimism" },
   { id: 8453, name: "Base" },
   { id: 43114, name: "Avalanche" },
-  { id: 324, name: "zkSync Era" },
-  { id: 59144, name: "Linea" },
-  { id: 100, name: "Gnosis" },
-  { id: 250, name: "Fantom" },
 ];
 
-/* -------- chain params for add/switch (MetaMask) -------- */
-const RPC: Record<number, string[]> = {
-  1: ["https://twilight-warmhearted-sun.quiknode.pro/1b0aa7d5389980aadfe80082f8b9c5d11d1ae78b/"],
-  56: ["https://bsc-dataseed.binance.org/"],
-  137: ["https://polygon-rpc.com/"],
-  42161: ["https://arb1.arbitrum.io/rpc"],
-  10: ["https://mainnet.optimism.io"],
-  8453: ["https://mainnet.base.org"],
-  43114: ["https://api.avax.network/ext/bc/C/rpc"],
-  324: ["https://mainnet.era.zksync.io"],
-  59144: ["https://rpc.linea.build"],
-  100: ["https://rpc.gnosis.gateway.fm"],
-  250: ["https://rpc.ftm.tools/"],
-};
-const EXPLORER: Record<number, string> = {
-  1: "https://etherscan.io",
-  56: "https://bscscan.com",
-  137: "https://polygonscan.com",
-  42161: "https://arbiscan.io",
-  10: "https://optimistic.etherscan.io",
-  8453: "https://basescan.org",
-  43114: "https://snowtrace.io",
-  324: "https://explorer.zksync.io",
-  59144: "https://lineascan.build",
-  100: "https://gnosisscan.io",
-  250: "https://ftmscan.com",
-};
-const NATIVE_CCY: Record<number, { name: string; symbol: string; decimals: number }> = {
-  1: { name: "Ether", symbol: "ETH", decimals: 18 },
-  56: { name: "BNB", symbol: "BNB", decimals: 18 },
-  137: { name: "MATIC", symbol: "MATIC", decimals: 18 },
-  42161: { name: "Ether", symbol: "ETH", decimals: 18 },
-  10: { name: "Ether", symbol: "ETH", decimals: 18 },
-  8453: { name: "Ether", symbol: "ETH", decimals: 18 },
-  43114: { name: "AVAX", symbol: "AVAX", decimals: 18 },
-  324: { name: "Ether", symbol: "ETH", decimals: 18 },
-  59144: { name: "Ether", symbol: "ETH", decimals: 18 },
-  100: { name: "xDAI", symbol: "XDAI", decimals: 18 },
-  250: { name: "FTM", symbol: "FTM", decimals: 18 },
-};
-async function ensureChain(chainId: number) {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error("Wallet not found");
-  const targetHex = "0x" + chainId.toString(16);
-  const current = parseInt(await eth.request({ method: "eth_chainId" }), 16);
-  if (current === chainId) return;
-
-  try {
-    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
-  } catch (e: any) {
-    if (e?.code === 4902 && RPC[chainId] && NATIVE_CCY[chainId]) {
-      await eth.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: targetHex,
-            chainName: CHAINS.find((c) => c.id === chainId)?.name || `Chain ${chainId}`,
-            rpcUrls: RPC[chainId],
-            blockExplorerUrls: EXPLORER[chainId] ? [EXPLORER[chainId]] : [],
-            nativeCurrency: NATIVE_CCY[chainId],
-          },
-        ],
-      });
-      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
-    } else {
-      throw e;
-    }
-  }
-}
-
 const NATIVE_PRIORITIES: Record<number, string[]> = {
+  56: ["BNB", "WBNB"],
   1: ["ETH", "WETH"],
+  137: ["MATIC", "WMATIC", "POL", "WPOL"],
   42161: ["ETH", "WETH"],
   10: ["ETH", "WETH"],
   8453: ["ETH", "WETH"],
-  324: ["ETH", "WETH"],
-  59144: ["ETH", "WETH"],
-  56: ["BNB", "WBNB"],
-  137: ["MATIC", "WMATIC", "POL", "WPOL"],
   43114: ["AVAX", "WAVAX"],
-  250: ["FTM", "WFTM"],
-  100: ["XDAI", "WXDAI", "GNO", "WGNO"],
 };
 
 function isNativeSymbol(chainId: number, sym?: string) {
   if (!sym) return false;
-  const wanted = NATIVE_PRIORITIES[chainId] || [];
-  return wanted.includes(sym.toUpperCase());
+  const set = NATIVE_PRIORITIES[chainId] || [];
+  return set.includes(sym.toUpperCase());
 }
 function asNativeToken(chainId: number, base?: Token): Token | undefined {
   if (!base) return undefined;
@@ -154,227 +90,454 @@ function asNativeToken(chainId: number, base?: Token): Token | undefined {
     logoURI: base.logoURI,
   };
 }
-const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test(s.trim());
+const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
 
-/* ---------- Server API: read ERC-20 meta (works on all EVM chains) ---------- */
-async function readErc20MetaViaRpc(chainId: number, address: string): Promise<Token | null> {
+/** 1inch v6 Spender fallback */
+const ONE_INCH_V6_SPENDER: Record<number, string> = {
+  1: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  56: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  137: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  42161: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  10: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  8453: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+  43114: "0x1111111254EEB25477B68fb85Ed929f73A960582",
+};
+
+async function ensureChain(chainId: number) {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+  const targetHex = "0x" + chainId.toString(16);
+  const current = parseInt(await eth.request({ method: "eth_chainId" }), 16);
+  if (current === chainId) return;
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: targetHex }],
+    });
+  } catch (e: any) {
+    if (e?.code === 4902) {
+      throw new Error("Add the network in MetaMask, then try again.");
+    }
+    throw e;
+  }
+}
+
+async function safeJson<T = any>(r: Response): Promise<T | null> {
+  try {
+    const txt = await r.text();
+    if (!txt) return null;
+    const first = txt.trim()[0];
+    if (first !== "{" && first !== "[") return null;
+    return JSON.parse(txt);
+  } catch {
+    return null;
+  }
+}
+
+/* =======================
+   Server API helpers
+======================= */
+
+async function readErc20MetaViaRpc(
+  chainId: number,
+  address: string
+): Promise<Token | null> {
   const r = await fetch("/api/erc20meta", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ chainId, address }),
   });
   if (!r.ok) return null;
-  const j = await r.json();
+  const j = await safeJson(r);
   if (j?.ok && j?.token) return j.token as Token;
   return null;
 }
+async function getSpender(chainId: number): Promise<string> {
+  try {
+    const r = await fetch(`/api/oneinch/spender?chainId=${chainId}`);
+    const j = await safeJson<{ address: string }>(r);
+    if (j?.address && isAddress(j.address)) return j.address;
+  } catch {}
+  return ONE_INCH_V6_SPENDER[chainId] || ONE_INCH_V6_SPENDER[1];
+}
+async function fetchTokens(chainId: number): Promise<TokensByAddr> {
+  const r = await fetch(`/api/oneinch/tokens?chainId=${chainId}`);
+  const j = await safeJson(r);
+  let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
+  if (!map && Array.isArray(j)) {
+    map = {};
+    (j as any[]).forEach((t: any) => {
+      map![String(t.address).toLowerCase()] = t;
+    });
+  }
+  const norm: TokensByAddr = {};
+  if (!map) return norm;
+  for (const [kRaw, tRaw] of Object.entries(map)) {
+    const k = kRaw.toLowerCase();
+    const t: any = { ...tRaw };
+    t.address = String(t.address);
+    if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
+    norm[k] = t as Token;
+  }
+  return norm;
+}
 
-/* ------------- Token Picker ------------- */
-function TokenPicker({
-  open,
-  onClose,
-  tokens,
-  onSelect,
-  onLoadByAddress,
-  chainId,
-}: {
+/* =======================
+   Wallet helpers
+======================= */
+
+function toUnits(amount: string, decimals: number): string {
+  const [i, f = ""] = (amount || "0").split(".");
+  const cleanI = i.replace(/\D/g, "") || "0";
+  const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
+  const s =
+    BigInt(cleanI) * (BigInt(10) ** BigInt(decimals)) + BigInt(cleanF || "0");
+  return s.toString();
+}
+
+async function readTokenBalance(account: string, token: Token): Promise<number> {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
+    const hexBal: string = await eth.request({
+      method: "eth_getBalance",
+      params: [account, "latest"],
+    });
+    const wei = BigInt(hexBal || "0x0");
+    return Number(wei) / 10 ** (token.decimals || 18);
+  }
+
+  const selector = "0x70a08231"; // balanceOf
+  const addr = account.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + addr;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  const raw = BigInt(hex || "0x0");
+  return Number(raw) / 10 ** (token.decimals || 18);
+}
+
+async function readAllowance(
+  owner: string,
+  spender: string,
+  token: Token
+): Promise<bigint> {
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) return BigInt(2) ** BigInt(255);
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  const selector = "0xdd62ed3e"; // allowance(address,address)
+  const a = owner.replace(/^0x/, "").padStart(64, "0");
+  const s = spender.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + a + s;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  return BigInt(hex || "0x0");
+}
+
+async function approveUnlimited(
+  chainId: number,
+  owner: string,
+  token: Token,
+  spender: string
+): Promise<string | null> {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+  await ensureChain(chainId);
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) return null;
+
+  // try proxy helper
+  try {
+    const r = await fetch("/api/oneinch/approve/transaction", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainId,
+        tokenAddress: token.address,
+        amount:
+          "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      }),
+    });
+    const j = await safeJson<any>(r);
+    if (j?.to && j?.data) {
+      const txParams = { from: owner, to: j.to, data: j.data, value: "0x0" };
+      const txHash: string = await eth.request({
+        method: "eth_sendTransaction",
+        params: [txParams],
+      });
+      return txHash;
+    }
+  } catch {}
+
+  // fallback: raw approve
+  const approveSel = "0x095ea7b3";
+  const max =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  const data =
+    approveSel + spender.replace(/^0x/, "").padStart(64, "0") + max;
+  const txParams = { from: owner, to: token.address, data, value: "0x0" };
+  const txHash: string = await eth.request({
+    method: "eth_sendTransaction",
+    params: [txParams],
+  });
+  return txHash;
+}
+
+/* =======================
+   Pricing helpers
+======================= */
+
+function pickUSDC(map: TokensByAddr): Token | undefined {
+  const vals = Object.values(map);
+  return (
+    vals.find((t) => (t.symbol || "").toUpperCase() === "USDC" && t.decimals === 6) ||
+    vals.find((t) => (t.symbol || "").toUpperCase() === "USDC") ||
+    vals.find((t) => (t.name || "").toLowerCase().includes("usd coin")) ||
+    undefined
+  );
+}
+async function miniQuoteTokens(opts: {
+  chainId: number;
+  src: Token;
+  dst: Token;
+  amountTokens: number;
+}): Promise<number | null> {
+  const { chainId, src, dst, amountTokens } = opts;
+  try {
+    const r = await fetch("/api/oneinch/quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainId,
+        src: src.address,
+        dst: dst.address,
+        amount: toUnits(String(amountTokens), src.decimals),
+      }),
+    });
+    const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+    if (!j || !("ok" in j) || !j.ok) return null;
+    const out = Number(j.data.dstAmount) / 10 ** (j.data.dstToken.decimals || 18);
+    return out;
+  } catch {
+    return null;
+  }
+}
+async function tokenUsdPrice(
+  chainId: number,
+  tkn: Token,
+  usdc: Token
+): Promise<number | null> {
+  if ((tkn.symbol || "").toUpperCase() === "USDC") return 1;
+  const eps = Math.pow(10, -Math.min(6, tkn.decimals)) * 10;
+  const out = await miniQuoteTokens({
+    chainId,
+    src: tkn,
+    dst: usdc,
+    amountTokens: eps,
+  });
+  if (out == null) return null;
+  return out / eps;
+}
+
+/* =======================
+   Token Picker
+======================= */
+
+function TokenPicker(props: {
   open: boolean;
   onClose: () => void;
+  onPick: (t: Token) => void;
   tokens?: TokensByAddr;
-  onSelect: (t: Token) => void;
-  onLoadByAddress: (addr: string) => Promise<void>;
   chainId: number;
 }) {
-  const [q, setQ] = useState("");
-  const [loadingCustom, setLoadingCustom] = useState(false);
-  const [customErr, setCustomErr] = useState<string | null>(null);
+  const { open, onClose, onPick, tokens, chainId } = props;
+
+  const [q, setQ] = useState<string>("");
+  const [pendingAddr, setPendingAddr] = useState<Token | null>(null);
 
   const list = useMemo(() => {
-    if (!tokens) return [];
-    const arr = Object.values(tokens);
-    if (!q.trim() || isAddress(q.trim())) return arr.slice(0, 400);
-    const s = q.trim().toLowerCase();
-    return arr
-      .filter(
-        (t) =>
-          t.symbol?.toLowerCase().includes(s) ||
-          t.name?.toLowerCase().includes(s) ||
-          t.address?.toLowerCase() === s
-      )
-      .slice(0, 400);
-  }, [tokens, q]);
+    const arr = Object.values(tokens || {});
+    arr.sort(
+      (a, b) =>
+        (a.symbol || "").localeCompare(b.symbol || "") ||
+        (a.name || "").localeCompare(b.name || "")
+    );
+    return arr;
+  }, [tokens]);
 
-  const qIsAddr = isAddress(q.trim());
+  const filtered = useMemo(() => {
+    const v = (q || "").trim();
+    if (!v) return list;
+    if (isAddress(v)) {
+      const hit = (tokens || {})[v.toLowerCase()];
+      return hit ? [hit] : [];
+    }
+    const s = v.toLowerCase();
+    return list.filter(
+      (t) =>
+        (t.symbol || "").toLowerCase().includes(s) ||
+        (t.name || "").toLowerCase().includes(s) ||
+        t.address.toLowerCase().includes(s)
+    );
+  }, [q, list, tokens]);
 
-  // AUTO-LOAD: if user pasted a contract address, fetch and add it instantly
   useEffect(() => {
-    let stop = false;
     (async () => {
-      if (!qIsAddr) return;
-      const addrL = q.trim().toLowerCase();
-      if (tokens && tokens[addrL]) {
-        onSelect(tokens[addrL]);
+      const v = (q || "").trim();
+      if (!isAddress(v)) {
+        setPendingAddr(null);
         return;
       }
-      setLoadingCustom(true);
-      setCustomErr(null);
-      try {
-        await onLoadByAddress(addrL);
-        if (!stop) setQ("");
-      } catch (e: any) {
-        if (!stop) setCustomErr(e?.message || "Failed to load token");
-      } finally {
-        if (!stop) setLoadingCustom(false);
+      if ((tokens || {})[v.toLowerCase()]) {
+        setPendingAddr(null);
+        return;
       }
+      const meta = await readErc20MetaViaRpc(chainId, v);
+      setPendingAddr(meta);
     })();
-    return () => {
-      stop = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qIsAddr, q]);
+  }, [q, tokens, chainId]);
 
   if (!open) return null;
+
+  const choose = (t: Token) => {
+    onPick(t);
+    setQ("");
+    setPendingAddr(null);
+    onClose();
+  };
+
   return (
-    <div className="picker-wrap" onClick={onClose}>
+    <div className="picker-overlay" onClick={onClose}>
       <div className="picker" onClick={(e) => e.stopPropagation()}>
-        <div className="picker-top">
+        <div className="phead">
+          <div className="ptitle">Select a token</div>
+          <button className="pclose" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="psearch">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name / symbol / contract…"
+            placeholder="Search by symbol, name, or paste address…"
           />
-          <button onClick={onClose}>Close</button>
+          {pendingAddr && (
+            <button className="padd" onClick={() => choose(pendingAddr)}>
+              Add by address
+            </button>
+          )}
         </div>
 
-        {qIsAddr && (
-          <div className="custom-load">
-            <div className="custom-left">
-              <div className="custom-caption">
-                Contract on {CHAINS.find((c) => c.id === chainId)?.name}:
-              </div>
-              <code className="custom-code">{q.trim()}</code>
-            </div>
-            <div className="custom-right">
-              <button
-                disabled={loadingCustom}
-                onClick={async () => {
-                  setLoadingCustom(true);
-                  setCustomErr(null);
-                  try {
-                    await onLoadByAddress(q.trim());
-                    setQ("");
-                  } catch (e: any) {
-                    setCustomErr(e?.message || "Failed to load token");
-                  } finally {
-                    setLoadingCustom(false);
-                  }
-                }}
-              >
-                {loadingCustom ? "Loading…" : "Add token from chain"}
-              </button>
-              {customErr && <div className="err">{customErr}</div>}
-            </div>
-          </div>
-        )}
-
-        <div className="picker-list">
-          {tokens ? (
-            list.length ? (
-              list.map((t) => (
-                <button
-                  key={t.address + t.symbol}
-                  className="picker-row"
-                  onClick={() => (onSelect(t), onClose())}
-                >
-                  <div className="logo">
-                    {t.logoURI ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={t.logoURI} alt={t.symbol} />
-                    ) : (
-                      <span className="dot" />
-                    )}
-                  </div>
-                  <div className="pick-main">
-                    <div className="pick-symbol">{t.symbol}</div>
-                    <div className="pick-name">{t.name}</div>
-                  </div>
-                  <div className="pick-addr">{short(t.address)}</div>
-                </button>
-              ))
-            ) : (
-              <div className="picker-empty">No results.</div>
-            )
-          ) : (
-            <div className="picker-empty">Loading tokens…</div>
+        <div className="plist">
+          {filtered.length === 0 && !pendingAddr && (
+            <div className="pempty">No matches. Paste a contract address above to add it.</div>
           )}
+          {filtered.map((t) => (
+            <button key={t.address} className="prow" onClick={() => choose(t)}>
+              {t.logoURI ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={t.logoURI} alt="" />
+              ) : (
+                <span className="dot" />
+              )}
+              <div className="pcol">
+                <div className="psym">{t.symbol}</div>
+                <div className="pmeta">{t.name}</div>
+              </div>
+              <div className="paddr">{short(t.address)}</div>
+            </button>
+          ))}
         </div>
       </div>
 
       <style jsx>{`
-        /* overlay + panel */
-        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
-        .picker { width:600px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
-
-        /* top search bar */
-        .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #eef0f2; }
-        .picker-top input { flex:1; border:1px solid #e6e8eb; border-radius:10px; padding:10px 12px; }
-
-        /* address helper row (green button area) */
-        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #f3f5f7; flex-wrap:wrap; }
-        .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
-        .custom-caption { white-space:nowrap; color:#374151; }
-        .custom-code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; }
-        .custom-right { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
-        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; flex-shrink:0; white-space:nowrap; }
-
-        /* list area */
-        .picker-list { max-height:60vh; overflow:auto; }
-        .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; text-align:left; }
-        .picker-row:hover { background:#f9f9fb; }
-        .logo img { width:28px; height:28px; border-radius:50%; }
-        .dot { width:10px; height:10px; background:#c4c9cf; border-radius:50%; display:inline-block; }
-        .pick-symbol { font-weight:600; }
-        .pick-name { font-size:12px; color:#6b7280; }
-        .pick-addr { font-size:11px; color:#9aa1a9; }
-        .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
-
-        .err { color:#b42318; font-size:12px; }
+        .picker-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+          display: grid; place-items: center; z-index: 50;
+        }
+        .picker {
+          width: 720px; max-width: calc(100% - 24px);
+          background: #0b152b; border: 1px solid #1d2a44; border-radius: 16px;
+          color: #e6eaf2; padding: 12px;
+        }
+        .phead { display:flex; justify-content:space-between; align-items:center; padding: 4px 6px 10px; }
+        .ptitle { font-weight:800; }
+        .pclose { background:transparent; color:#a8b4c9; border:0; font-size:18px; cursor:pointer; }
+        .psearch { display:flex; gap:8px; padding: 6px; }
+        .psearch input {
+          flex:1; border:1px solid #1d2a44; background:#0f1b34; color:#e6eaf2; border-radius:10px; padding:8px 10px;
+        }
+        .padd { border:1px solid #2c3a58; background:transparent; color:#9fd6ff; border-radius:10px; padding:6px 10px; }
+        .plist { max-height:420px; overflow:auto; padding: 6px; display:flex; flex-direction:column; gap:4px; }
+        .prow {
+          display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+          border:1px solid #1d2a44; background:rgba(255,255,255,0.02); border-radius:12px; padding:8px 10px;
+          color:#e6eaf2; cursor:pointer;
+        }
+        .prow img { width:22px; height:22px; border-radius:999px; }
+        .dot { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
+        .pcol { flex:1; display:flex; flex-direction:column; }
+        .psym { font-weight:700; }
+        .pmeta { font-size:12px; color:#a8b4c9; }
+        .paddr { font-size:12px; color:#94a3b8; }
+        .pempty { padding: 16px; text-align:center; color:#a8b4c9; }
       `}</style>
     </div>
   );
 }
 
-/* ---------------- Page ---------------- */
+/* =======================
+   UI Component
+======================= */
+
 export default function Page() {
-  // wallet
+  /* Wallet */
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(56); // default BNB for your testing
+  const [chainId, setChainId] = useState<number>(56); // default BNB
 
-  // tokens
+  /* Tokens */
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
   const [srcToken, setSrcToken] = useState<Token | undefined>(undefined);
   const [dstToken, setDstToken] = useState<Token | undefined>(undefined);
   const [pickSrcOpen, setPickSrcOpen] = useState(false);
   const [pickDstOpen, setPickDstOpen] = useState(false);
 
-  // swap state
-  const [amountIn, setAmountIn] = useState<string>("0.01");
-  const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
+  /* Editing */
+  const [editSide, setEditSide] = useState<"src" | "dst">("src");
+  const [amountIn, setAmountIn] = useState<string>("1");
+  const [amountOut, setAmountOut] = useState<string>("");
+  const [computedInFromOut, setComputedInFromOut] = useState<string>("0");
+
+  /* Slippage */
+  const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">(
+    "market"
+  );
   const [customSlip, setCustomSlip] = useState<string>("");
 
-  // quote + USD
+  /* Quote + USD */
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
+
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
 
-  // balances
-  const [srcBal, setSrcBal] = useState<string | null>(null);
-  const [dstBal, setDstBal] = useState<string | null>(null);
+  /* Balances */
+  const [srcBal, setSrcBal] = useState<number | null>(null);
+  const [dstBal, setDstBal] = useState<number | null>(null);
+
+  /* Spender */
+  const [spender, setSpender] = useState<string | null>(null);
+
+  /* Price impact */
+  const [impact, setImpact] = useState<number | null>(null);
 
   const debounceRef = useRef<number | null>(null);
+
   const bps = useMemo(
     () =>
       slipMode === "slow"
@@ -387,7 +550,7 @@ export default function Page() {
     [slipMode, customSlip]
   );
 
-  /* ---- wallet ---- */
+  /* Wallet connect */
   async function connect() {
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
@@ -397,85 +560,57 @@ export default function Page() {
     const id = parseInt(hexId, 16);
     setWalletChainId(id);
     setChainId((prev) => prev || id);
+
     eth.removeAllListeners?.("accountsChanged");
     eth.removeAllListeners?.("chainChanged");
     eth.on?.("accountsChanged", (a: string[]) => setAccount(a?.[0] ?? null));
-    eth.on?.("chainChanged", (hex: string) => setWalletChainId(parseInt(hex, 16) || null));
+    eth.on?.("chainChanged", (hex: string) =>
+      setWalletChainId(parseInt(hex, 16) || null)
+    );
   }
   function disconnect() {
     setAccount(null);
   }
 
-  // when UI chain changes, switch/add in wallet
+  /* Switch wallet chain if user changes in UI */
   useEffect(() => {
     (async () => {
       try {
         if (walletChainId == null || walletChainId === chainId) return;
         await ensureChain(chainId);
       } catch (e: any) {
-        console.warn("chain switch/add failed:", e?.message || e);
+        console.warn("chain switch failed:", e?.message || e);
       }
     })();
   }, [chainId, walletChainId]);
 
-  /* ---- tokens fetch ---- */
-  async function fetchTokens(cid: number): Promise<TokensByAddr> {
-    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
-    const j = await r.json();
-    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
-    if (!map && Array.isArray(j)) {
-      map = {};
-      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
-    }
-    if (!map) map = {};
-    const norm: TokensByAddr = {};
-    for (const [kRaw, tRaw] of Object.entries(map)) {
-      const k = kRaw.toLowerCase();
-      const t: any = { ...tRaw };
-      t.address = String(t.address);
-      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
-      norm[k] = t as Token;
-    }
-    return norm;
-  }
-
-  function pickNative(map: TokensByAddr): Token | undefined {
-    const vals = Object.values(map);
-    if (map[NATIVE.toLowerCase()]) return asNativeToken(chainId, map[NATIVE.toLowerCase()]);
-    const wanted = NATIVE_PRIORITIES[chainId] || [];
-    for (const sym of wanted) {
-      const hit = vals.find((t) => (t.symbol || "").toUpperCase() === sym);
-      if (hit) return asNativeToken(chainId, hit);
-    }
-    const fuzzy = vals.find((t) =>
-      /eth|weth|bnb|wbnb|matic|wmatic|avax|wavax|ftm|wftm|xdai|wxdai|gno|wgno/i.test(
-        (t.symbol || "") + " " + (t.name || "")
-      )
-    );
-    return fuzzy ? asNativeToken(chainId, fuzzy) : undefined;
-  }
-  function pickUSDC(map: TokensByAddr): Token | undefined {
-    const vals = Object.values(map);
-    return (
-      vals.find((t) => (t.symbol || "").toUpperCase() === "USDC" && t.decimals === 6) ||
-      vals.find((t) => (t.symbol || "").toUpperCase() === "USDC") ||
-      vals.find((t) => (t.name || "").toLowerCase().includes("usd coin")) ||
-      vals[1]
-    );
-  }
-
+  /* Load tokens & spender on chain change */
   useEffect(() => {
     let stop = false;
     setTokens(undefined);
     setSrcToken(undefined);
     setDstToken(undefined);
+    setSpender(null);
     (async () => {
       try {
         const map = await fetchTokens(chainId);
         if (stop) return;
         setTokens(map);
-        setSrcToken(pickNative(map) || Object.values(map)[0]);
-        setDstToken(pickUSDC(map) || Object.values(map)[1]);
+
+        const vals = Object.values(map);
+        const nat =
+          (NATIVE.toLowerCase() in map && asNativeToken(chainId, map[NATIVE.toLowerCase()])) ||
+          (vals.find((t) => isNativeSymbol(chainId, t.symbol)) &&
+            asNativeToken(chainId, vals.find((t) => isNativeSymbol(chainId, t.symbol))!)) ||
+          undefined;
+
+        const usdc = pickUSDC(map);
+
+        setSrcToken(nat || vals[0]);
+        setDstToken(usdc || vals.find((v) => v !== (nat || vals[0])) || vals[1]);
+
+        const sp = await getSpender(chainId);
+        setSpender(sp);
       } catch (e) {
         console.error(e);
       }
@@ -488,150 +623,232 @@ export default function Page() {
   function onPickSrc(t: Token) {
     if (isNativeSymbol(chainId, t.symbol) || t.address.toLowerCase() === NATIVE.toLowerCase()) {
       const nat = asNativeToken(chainId, t);
-      if (nat) setSrcToken(nat);
-      else setSrcToken(t);
-    } else setSrcToken(t);
+      setSrcToken(nat || t);
+    } else {
+      setSrcToken(t);
+    }
   }
   function onPickDst(t: Token) {
     setDstToken(t);
   }
 
-  /* ---- Add custom by address (SERVER API) ---- */
-  async function loadCustomAddress(addr: string) {
-    const a = addr.trim().toLowerCase();
-    if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
-    const meta = await readErc20MetaViaRpc(chainId, a);
-    if (!meta) throw new Error("Could not read token (check network/contract)");
-    setTokens((prev) => {
-      const next = { ...(prev || {}) };
-      next[a] = {
-        ...meta,
-        logoURI: meta.logoURI || `https://tokens.1inch.io/${chainId}/${a}.png`,
-      };
-      return next;
-    });
-    setSrcToken((s) => s || (meta as Token));
-  }
-
-  /* ---- balances ---- */
-  function fromUnits(v: bigint, decimals: number) {
-    const s = v.toString();
-    if (decimals === 0) return s;
-    const pad = Math.max(0, decimals - s.length + 1);
-    const whole = s.length > decimals ? s.slice(0, -decimals) : "0";
-    const frac = (s.length > decimals ? s.slice(-decimals) : "0".repeat(decimals - s.length) + s).replace(/0+$/, "");
-    return Number(`${whole}.${frac || "0"}`);
-  }
-  function pad32(hexNo0x: string) {
-    return hexNo0x.padStart(64, "0");
-  }
-  function addrToTopic(addr: string) {
-    return `000000000000000000000000${addr.replace(/^0x/, "").toLowerCase()}`;
-  }
-  async function readTokenBalance(t?: Token, who?: string | null): Promise<string | null> {
-    if (!t || !who) return null;
-    const eth = (window as any).ethereum;
-    if (!eth) return null;
-
-    try {
-      if (t.address.toLowerCase() === NATIVE.toLowerCase()) {
-        const hex: string = await eth.request({ method: "eth_getBalance", params: [who, "latest"] });
-        const bi = BigInt(hex);
-        return fmt(fromUnits(bi, 18), 6);
-      } else {
-        const data =
-          "0x70a08231" + // balanceOf(address)
-          addrToTopic(who);
-        const res: string = await eth.request({
-          method: "eth_call",
-          params: [{ to: t.address, data }, "latest"],
-        });
-        const bi = BigInt(res || "0x0");
-        return fmt(fromUnits(bi, t.decimals || 18), 6);
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  // refresh balances on relevant changes
-  useEffect(() => {
-    (async () => setSrcBal(await readTokenBalance(srcToken, account)))();
-  }, [account, chainId, srcToken?.address]);
-  useEffect(() => {
-    (async () => setDstBal(await readTokenBalance(dstToken, account)))();
-  }, [account, chainId, dstToken?.address]);
-
-  /* ---- main quote ---- */
+  /* Quotes (both directions) + price impact (vs tiny trade) */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
+
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
       setQuoting(true);
       setQuoteErr(null);
+      setImpact(null);
       try {
-        const body = {
-          chainId,
-          src: srcToken.address,
-          dst: dstToken.address,
-          amount: toUnits(amountIn || "0", srcToken.decimals),
-        };
-        const r = await fetch("/api/oneinch/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const j = (await r.json()) as QuoteResponse;
-        setQuote(j);
-        if (!("ok" in j) || !j.ok) setQuoteErr((j as any).error || "quote failed");
+        if (editSide === "src") {
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chainId,
+              src: srcToken.address,
+              dst: dstToken.address,
+              amount: toUnits(amountIn || "0", srcToken.decimals),
+            }),
+          });
+          const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+          if (!j || !("ok" in j) || !j.ok) {
+            setQuote(j || { ok: false, error: "quote failed" });
+            setQuoteErr((j as any)?.error || "quote failed");
+          } else {
+            setQuote(j);
+            // price impact vs tiny quote
+            const aIn = Number(amountIn || "0");
+            if (aIn > 0) {
+              const tiny = await miniQuoteTokens({
+                chainId,
+                src: srcToken,
+                dst: dstToken,
+                amountTokens: Math.pow(10, -Math.min(6, srcToken.decimals)) * 10,
+              });
+              const big =
+                Number(j.data.dstAmount) /
+                10 ** (j.data.dstToken.decimals || dstToken.decimals);
+              if (tiny && aIn) {
+                const rateBig = big / aIn;
+                const rateTiny = tiny / (Math.pow(10, -Math.min(6, srcToken.decimals)) * 10);
+                const imp = Math.max(0, 1 - rateBig / rateTiny);
+                setImpact(imp);
+              }
+            }
+          }
+        } else {
+          // edit desired OUT -> compute needed IN
+          const r = await fetch("/api/oneinch/quote", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chainId,
+              src: dstToken.address,
+              dst: srcToken.address,
+              amount: toUnits(amountOut || "0", dstToken.decimals),
+            }),
+          });
+          const j = (await safeJson<QuoteResponse>(r)) as QuoteResponse | null;
+          if (!j || !("ok" in j) || !j.ok) {
+            setQuote(j || { ok: false, error: "quote failed" });
+            setQuoteErr((j as any)?.error || "quote failed");
+            setComputedInFromOut("0");
+          } else {
+            const needIn =
+              Number(j.data.dstAmount) / 10 ** (srcToken.decimals || 18);
+            setComputedInFromOut(needIn ? String(needIn) : "0");
+
+            // forward quote so the UI shows dstAmount
+            const f = await fetch("/api/oneinch/quote", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                chainId,
+                src: srcToken.address,
+                dst: dstToken.address,
+                amount: toUnits(String(needIn || 0), srcToken.decimals),
+              }),
+            });
+            const fwd = (await safeJson<QuoteResponse>(f)) as QuoteResponse | null;
+            setQuote(fwd || j);
+
+            // impact
+            if (needIn > 0) {
+              const tiny = await miniQuoteTokens({
+                chainId,
+                src: srcToken,
+                dst: dstToken,
+                amountTokens: Math.pow(10, -Math.min(6, srcToken.decimals)) * 10,
+              });
+              const bigOut =
+                (fwd && "ok" in fwd && fwd.ok
+                  ? Number(fwd.data.dstAmount)
+                  : Number(j.data.dstAmount)) / 10 ** dstToken.decimals;
+              if (tiny && needIn) {
+                const rateBig = bigOut / needIn;
+                const rateTiny = tiny / (Math.pow(10, -Math.min(6, srcToken.decimals)) * 10);
+                const imp = Math.max(0, 1 - rateBig / rateTiny);
+                setImpact(imp);
+              }
+            }
+          }
+        }
       } catch (e: any) {
-        setQuote(null);
+        setQuote({ ok: false, error: e?.message || String(e) });
         setQuoteErr(e?.message || String(e));
       } finally {
         setQuoting(false);
       }
-    }, 250);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
+    }, 220);
+  }, [
+    editSide,
+    chainId,
+    srcToken?.address,
+    dstToken?.address,
+    amountIn,
+    amountOut,
+    srcToken?.decimals,
+    dstToken?.decimals,
+  ]);
 
-  /* ---- $ reflections (simple) ---- */
+  /* USD reflections */
   useEffect(() => {
     (async () => {
       try {
-        if (!srcToken || !dstToken || !amountIn) return setPayUsd(null);
-        if ((srcToken.symbol || "").toUpperCase() === "USDC") return setPayUsd(Number(amountIn));
-        const r = await fetch("/api/oneinch/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chainId,
-            src: srcToken.address,
-            dst: dstToken.address,
-            amount: toUnits(amountIn, srcToken.decimals),
-          }),
-        });
-        const j = (await r.json()) as QuoteResponse;
-        if ((j as QuoteOk).ok) {
-          const out = Number((j as QuoteOk).data.dstAmount) / 10 ** (dstToken.decimals || 6);
-          setPayUsd(out);
-        } else setPayUsd(null);
+        if (!srcToken || !dstToken || !tokens) {
+          setPayUsd(null);
+          setRecvUsd(null);
+          return;
+        }
+        const usdc = pickUSDC(tokens);
+        if (!usdc) {
+          setPayUsd(null);
+          setRecvUsd(null);
+          return;
+        }
+
+        if (editSide === "src") {
+          const ain = Number(amountIn || "0");
+          if (!ain) {
+            setPayUsd(0);
+            setRecvUsd(0);
+            return;
+          }
+          const srcUsd = await tokenUsdPrice(chainId, srcToken, usdc);
+          const outTokens =
+            quote && "ok" in quote && quote.ok
+              ? Number(quote.data.dstAmount) / 10 ** dstToken.decimals
+              : 0;
+          const dstUsd = await tokenUsdPrice(chainId, dstToken, usdc);
+
+          setPayUsd(srcUsd != null ? ain * srcUsd : null);
+          setRecvUsd(dstUsd != null ? outTokens * dstUsd : null);
+        } else {
+          const aout = Number(amountOut || "0");
+          if (!aout) {
+            setRecvUsd(0);
+            setPayUsd(0);
+            return;
+          }
+          const dstUsd = await tokenUsdPrice(chainId, dstToken, usdc);
+          const needIn = Number(computedInFromOut || "0");
+          const srcUsd = await tokenUsdPrice(chainId, srcToken, usdc);
+
+          setRecvUsd(dstUsd != null ? aout * dstUsd : null);
+          setPayUsd(srcUsd != null ? needIn * srcUsd : null);
+        }
       } catch {
         setPayUsd(null);
-      }
-    })();
-
-    (async () => {
-      try {
-        if (!dstToken || !quote || !("ok" in quote) || !quote.ok) return setRecvUsd(null);
-        const out = Number(quote.data.dstAmount) / 10 ** (dstToken.decimals || 6);
-        setRecvUsd(out || null);
-      } catch {
         setRecvUsd(null);
       }
     })();
-  }, [chainId, srcToken, dstToken, amountIn, quote]);
+  }, [
+    chainId,
+    tokens,
+    srcToken?.address,
+    dstToken?.address,
+    editSide,
+    amountIn,
+    amountOut,
+    computedInFromOut,
+    quote,
+  ]);
 
-  /* ---- Build + Send (robust hex) ---- */
+  /* Balances */
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !srcToken) return setSrcBal(null);
+        try {
+          await ensureChain(chainId);
+        } catch {}
+        const bal = await readTokenBalance(account, srcToken);
+        setSrcBal(bal);
+      } catch {
+        setSrcBal(null);
+      }
+    })();
+  }, [account, chainId, srcToken?.address]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !dstToken) return setDstBal(null);
+        try {
+          await ensureChain(chainId);
+        } catch {}
+        const bal = await readTokenBalance(account, dstToken);
+        setDstBal(bal);
+      } catch {
+        setDstBal(null);
+      }
+    })();
+  }, [account, chainId, dstToken?.address]);
+
+  /* Swap (allowance-aware, tolerant to API styles) */
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
@@ -649,7 +866,8 @@ export default function Page() {
       if (typeof val === "object") {
         if (typeof (val as any).hex === "string") return (val as any).hex;
         if (typeof (val as any)._hex === "string") return (val as any)._hex;
-        if (typeof (val as any).toHexString === "function") return (val as any).toHexString();
+        if (typeof (val as any).toHexString === "function")
+          return (val as any).toHexString();
         if (typeof (val as any).toString === "function") {
           try {
             const s = (val as any).toString();
@@ -671,40 +889,109 @@ export default function Page() {
       return undefined;
     };
 
-    try {
-      const body = {
-        chainId,
-        from: account,
-        src: srcToken.address,
-        dst: dstToken.address,
-        amount: toUnits(amountIn || "0", srcToken.decimals),
-        slippageBps: bps,
-      };
+    const extractSpender = (obj: any): string | null => {
+      const s =
+        obj?.data?.spender ||
+        obj?.data?.allowanceTarget ||
+        obj?.spender ||
+        obj?.allowanceTarget ||
+        null;
+      if (s && /^0x[a-fA-F0-9]{40}$/.test(s)) return s;
+      const text =
+        typeof obj?.error === "string" ? obj.error :
+        typeof obj === "string" ? obj : "";
+      const m = String(text).match(/0x[a-fA-F0-9]{40}/);
+      return m ? m[0] : null;
+    };
+    const containsAllowanceError = (j: any, raw: string) =>
+      /Not enough allowance/i.test(j?.error || "") || /Not enough allowance/i.test(raw || "");
 
+    const srcAmt = editSide === "src" ? amountIn : computedInFromOut;
+    const needUnits = toUnits(srcAmt || "0", srcToken.decimals);
+
+    const build = async () => {
       const r = await fetch("/api/oneinch/swap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          chainId,
+          from: account,
+          src: srcToken.address,
+          dst: dstToken.address,
+          amount: needUnits,
+          slippageBps: bps,
+        }),
       });
-      const j = (await r.json()) as SwapBuildResponse;
-      if (!j.ok || !j.data?.tx) return alert((j as any)?.error || "Swap build failed");
+      const txt = await r.text();
+      let j: any = {};
+      try { j = JSON.parse(txt); } catch {}
+      return { ok: r.ok, json: j, raw: txt };
+    };
 
-      const raw: any = j.data.tx;
-      const txParams: any = {
-        from: account,
-        to: raw.to,
-        data: raw.data,
-        value: toHex(raw.value) ?? "0x0",
-      };
-      const gas = toHex(raw.gas);
-      const gasPrice = toHex(raw.gasPrice);
-      const maxFeePerGas = toHex(raw.maxFeePerGas);
-      const maxPriorityFeePerGas = toHex(raw.maxPriorityFeePerGas);
-      if (gas) txParams.gas = gas;
-      if (gasPrice) txParams.gasPrice = gasPrice;
-      if (maxFeePerGas) txParams.maxFeePerGas = maxFeePerGas;
-      if (maxPriorityFeePerGas) txParams.maxPriorityFeePerGas = maxPriorityFeePerGas;
+    const doApprove = async (spndr: string) => {
+      let allowance = await readAllowance(account!, spndr, srcToken!);
+      if (allowance >= BigInt(needUnits)) return true;
+      const txHash = await approveUnlimited(chainId, account!, srcToken!, spndr);
+      if (!txHash) return false;
+      const start = Date.now();
+      while (Date.now() - start < 30000) {
+        await new Promise((r) => setTimeout(r, 2000));
+        allowance = await readAllowance(account!, spndr, srcToken!);
+        if (allowance >= BigInt(needUnits)) return true;
+      }
+      return false;
+    };
 
+    // 1) try build
+    let first = await build();
+
+    // 2) Handle allowance regardless of HTTP code style
+    if (!first.ok || containsAllowanceError(first.json, first.raw)) {
+      const spenderFromError = extractSpender(first.json) || extractSpender(first.raw);
+      const fallbackSpender = spender && isAddress(spender) ? spender : await getSpender(chainId);
+      const spenderToUse = spenderFromError || fallbackSpender;
+
+      const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
+      if (!isNative && spenderToUse) {
+        const ok = await doApprove(spenderToUse);
+        if (!ok) {
+          return alert(
+            `Approve submitted but not confirmed yet.\nPlease wait a moment, then press Swap again.`
+          );
+        }
+        first = await build();
+      }
+    }
+
+    if (!first.ok) {
+      const msg =
+        first?.json?.error ||
+        first?.json?.data?.description ||
+        `Swap build failed (${first.raw?.slice(0, 200) || "unknown error"})`;
+      return alert(msg);
+    }
+
+    const payload = first.json?.data?.tx || first.json?.data;
+    if (!payload?.to || !payload?.data) {
+      return alert("Swap build returned an invalid transaction payload.");
+    }
+
+    const txParams: any = {
+      from: account,
+      to: payload.to,
+      data: payload.data,
+      value: toHex(payload.value) ?? "0x0",
+    };
+    const gas = toHex(payload.gas);
+    const gasPrice = toHex(payload.gasPrice);
+    const maxFeePerGas = toHex(payload.maxFeePerGas);
+    const maxPriorityFeePerGas = toHex(payload.maxPriorityFeePerGas);
+    if (gas) txParams.gas = gas;
+    if (gasPrice) txParams.gasPrice = gasPrice;
+    if (maxFeePerGas) txParams.maxFeePerGas = maxFeePerGas;
+    if (maxPriorityFeePerGas) txParams.maxPriorityFeePerGas = maxPriorityFeePerGas;
+
+    try {
       const txHash: string = await eth.request({
         method: "eth_sendTransaction",
         params: [txParams],
@@ -715,25 +1002,65 @@ export default function Page() {
     }
   }
 
+  /* Derived values */
   const toAmount = useMemo(() => {
     if (!quote || !("ok" in quote) || !quote.ok) return "0.000000";
-    const out = Number(quote.data.dstAmount) / 10 ** (quote.data.dstToken.decimals || 6);
+    const out =
+      Number(quote.data.dstAmount) / 10 ** (quote.data.dstToken.decimals || 6);
     return out.toFixed(6);
   }, [quote]);
 
   const rateText = useMemo(() => {
-    if (!quote || !("ok" in quote) || !quote.ok || !srcToken || !dstToken) return "—";
-    const aIn = Number(amountIn || "0");
+    if (!quote || !("ok" in quote) || !quote.ok || !srcToken || !dstToken)
+      return "—";
+    const aIn = Number(
+      (editSide === "src" ? amountIn : computedInFromOut) || "0"
+    );
     const out = Number(quote.data.dstAmount) / 10 ** dstToken.decimals;
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
-  }, [quote, amountIn, srcToken, dstToken]);
+  }, [quote, amountIn, computedInFromOut, editSide, srcToken, dstToken]);
+
+  /* UI Bits */
+  const onMaxSrc = () => {
+    if (srcBal == null || !srcToken) return;
+    let max = srcBal;
+    const isNat = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
+    if (isNat) max = Math.max(0, max - 0.0003);
+    setEditSide("src");
+    setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
+  };
+  // “Receive” max just mirrors “pay” max for convenience
+  const onMaxDst = () => onMaxSrc();
+
+  const onFlip = () => {
+    const a = srcToken;
+    const b = dstToken;
+    setSrcToken(b);
+    setDstToken(a);
+  };
+
+  const payInputValue =
+    editSide === "src"
+      ? amountIn
+      : computedInFromOut
+      ? String(Number(computedInFromOut))
+      : "";
+  const recvInputValue = editSide === "src" ? toAmount : amountOut;
+
+  /* ============ RENDER ============ */
 
   return (
     <div className="wrap">
+      {/* Header with logo */}
+      <div className="top">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="brand" src="/logo.png" alt="PCW" />
+        <div className="brandTxt">PCW Swap</div>
+      </div>
+
       <div className="card">
         <div className="head">
-          <div className="title">PCW Swap</div>
-          <div className="right">
+          <div className="left">
             <select
               className="sel"
               value={chainId}
@@ -746,6 +1073,9 @@ export default function Page() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="right">
             {account ? (
               <>
                 <span className="pill green">{short(account)}</span>
@@ -773,17 +1103,40 @@ export default function Page() {
             )}
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
-          <input
-            className="amt"
-            value={amountIn}
-            inputMode="decimal"
-            onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
-            placeholder="0.0"
-          />
+
+          <div className="amtBox">
+            <div className="amtCol">
+              <input
+                className="amt"
+                value={payInputValue}
+                inputMode="decimal"
+                onFocus={() => setEditSide("src")}
+                onChange={(e) =>
+                  setAmountIn(e.target.value.replace(/[^\d.]/g, ""))
+                }
+                placeholder="0.0"
+              />
+              <div className="fiat">
+                {payUsd != null ? `~$${fmt(payUsd, 2)}` : "—"}
+              </div>
+            </div>
+            <button className="max" onClick={onMaxSrc}>
+              MAX
+            </button>
+          </div>
         </div>
-        <div className="subline">
+        <div className="metaRow">
           <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
-          <div className="bal">{account ? `Balance: ${srcBal ?? "—"}` : "Balance: —"}</div>
+          <div className="bal">
+            Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}
+          </div>
+        </div>
+
+        {/* centered flip */}
+        <div className="flip-wrap">
+          <button className="flip" onClick={onFlip} aria-label="Flip">
+            ↑↓
+          </button>
         </div>
 
         {/* You receive */}
@@ -798,48 +1151,90 @@ export default function Page() {
             )}
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
-          <div className="amt ro">{quoting ? "…" : toAmount}</div>
+
+          <div className="amtBox">
+            <div className="amtCol">
+              <input
+                className="amt"
+                value={recvInputValue}
+                inputMode="decimal"
+                onFocus={() => setEditSide("dst")}
+                onChange={(e) =>
+                  setAmountOut(e.target.value.replace(/[^\d.]/g, ""))
+                }
+                placeholder="0.0"
+              />
+              <div className="fiat">
+                {recvUsd != null ? `~$${fmt(recvUsd, 2)}` : "—"}
+              </div>
+            </div>
+            <button className="max" onClick={onMaxDst}>
+              MAX
+            </button>
+          </div>
         </div>
-        <div className="subline">
+        <div className="metaRow">
           <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
-          <div className="bal">{account ? `Balance: ${dstBal ?? "—"}` : "Balance: —"}</div>
+          <div className="bal">
+            Balance: {dstBal != null ? fmt(dstBal, 6) : "—"}
+          </div>
         </div>
 
         {/* Slippage */}
         <div className="slip">
           <span className="muted">Slippage</span>
           <div className="chips">
-            <button className={`chip ${slipMode === "slow" ? "on" : ""}`} onClick={() => setSlipMode("slow")}>
+            <button
+              className={`chip ${slipMode === "slow" ? "on" : ""}`}
+              onClick={() => setSlipMode("slow")}
+            >
               Slow
             </button>
-            <button className={`chip ${slipMode === "market" ? "on" : ""}`} onClick={() => setSlipMode("market")}>
+            <button
+              className={`chip ${slipMode === "market" ? "on" : ""}`}
+              onClick={() => setSlipMode("market")}
+            >
               Market
             </button>
-            <button className={`chip ${slipMode === "fast" ? "on" : ""}`} onClick={() => setSlipMode("fast")}>
+            <button
+              className={`chip ${slipMode === "fast" ? "on" : ""}`}
+              onClick={() => setSlipMode("fast")}
+            >
               Fast
             </button>
             <div className="custom">
-              <button className={`chip ${slipMode === "custom" ? "on" : ""}`} onClick={() => setSlipMode("custom")}>
+              <button
+                className={`chip ${slipMode === "custom" ? "on" : ""}`}
+                onClick={() => setSlipMode("custom")}
+              >
                 custom %
               </button>
               <input
                 value={customSlip}
                 placeholder={(bps / 100).toString()}
-                onChange={(e) => setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))}
+                onChange={(e) =>
+                  setCustomSlip(e.target.value.replace(/[^\d.]/g, ""))
+                }
               />
             </div>
           </div>
         </div>
 
-        {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">Est. network fee: –</div>
+          <div className="muted">
+            Price impact:&nbsp;
+            {impact == null ? "—" : `${(impact * 100).toFixed(2)}%`}
+          </div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
 
-        <button className="swap" onClick={onSwap} disabled={!srcToken || !dstToken || !amountIn || quoting}>
+        <button
+          className="swap"
+          onClick={onSwap}
+          disabled={!srcToken || !dstToken || quoting}
+        >
           Swap
         </button>
       </div>
@@ -848,62 +1243,178 @@ export default function Page() {
       <TokenPicker
         open={pickSrcOpen}
         onClose={() => setPickSrcOpen(false)}
+        onPick={onPickSrc}
         tokens={tokens}
-        onSelect={onPickSrc}
-        onLoadByAddress={loadCustomAddress}
         chainId={chainId}
       />
       <TokenPicker
         open={pickDstOpen}
         onClose={() => setPickDstOpen(false)}
+        onPick={onPickDst}
         tokens={tokens}
-        onSelect={onPickDst}
-        onLoadByAddress={loadCustomAddress}
         chainId={chainId}
       />
 
+      {/* Styles */}
       <style jsx>{`
-        .wrap { display:grid; place-items:center; min-height:100dvh; background:#fafbfc; padding:24px; }
-        .card { width:560px; max-width:100%; background:#fff; border:1px solid #e6e8eb; border-radius:16px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-        .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-        .title { font-weight:700; font-size:20px; }
-        .right { display:flex; gap:8px; align-items:center; }
-        .sel { border:1px solid #d7dbdf; border-radius:10px; padding:6px 8px; font-size:13px; }
-        .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #d7dbdf; background:#f3f5f7; }
-        .green { background:#e9f9f0; border-color:#b9efd3; }
-        .btn, .link { border:1px solid #d7dbdf; border-radius:10px; background:#f6f8fa; padding:6px 10px; font-size:13px; }
-        .link { background:transparent; border:none; color:#006adc; cursor:pointer; }
-        .lbl { display:block; font-size:12px; color:#6b7280; margin-top:12px; margin-bottom:6px; }
-        .row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
-        .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
-        .token img { width:20px; height:20px; border-radius:999px; }
-        .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; }
-        .amt.ro { user-select:none; }
-        .subline { display:flex; justify-content:space-between; margin-top:4px; }
-        .usd { font-size:12px; color:#6b7280; text-align:left; min-height:16px; }
-        .bal { font-size:12px; color:#6b7280; text-align:right; min-height:16px; }
-        .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+        :global(html) {
+          --pcw-text: #e6eaf2;
+          --pcw-muted: #a8b4c9;
+          --pcw-card: #0b152b;
+          --pcw-stroke: #1d2a44;
+        }
+        .wrap {
+          min-height: 100dvh;
+          display: grid;
+          grid-template-rows: auto 1fr;
+          gap: 18px;
+          /* Brighter Solana-like gradient */
+          background:
+            radial-gradient(1200px 700px at 65% -10%, rgba(22, 255, 199, 0.20) 0%, rgba(9, 18, 35, 0.0) 55%),
+            radial-gradient(900px 600px at 15% 10%, rgba(124, 58, 237, 0.25) 0%, rgba(9, 18, 35, 0.0) 60%),
+            radial-gradient(1000px 700px at 85% 80%, rgba(20, 241, 149, 0.18) 0%, rgba(9, 18, 35, 0.0) 65%),
+            linear-gradient(180deg, #0a1326 0%, #0a142a 40%, #0a1224 100%);
+          padding: 28px 18px 36px;
+        }
+        .top {
+          display:flex; align-items:center; gap:10px;
+          max-width: 980px; width:100%; margin: 0 auto;
+        }
+        .brand { width:30px; height:30px; border-radius:8px; }
+        .brandTxt { font-weight:800; color:#fff; opacity:0.9; }
+
+        .card {
+          width: 560px;
+          max-width: calc(100% - 24px);
+          margin: 0 auto;
+          color: var(--pcw-text);
+          background: var(--pcw-card);
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 16px;
+          padding: 20px;
+          backdrop-filter: blur(10px);
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+        }
+        .head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .sel,
+        .btn,
+        .link {
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 10px;
+          background: #0f1b34;
+          color: var(--pcw-text);
+          padding: 6px 10px;
+          font-size: 13px;
+        }
+        .link {
+          background: transparent;
+          border-color: transparent;
+          color: #9fd6ff;
+          cursor: pointer;
+        }
+        .pill {
+          display: inline-block;
+          padding: 4px 8px;
+          border-radius: 999px;
+          border: 1px solid #18d29f44;
+          background: #18d29f1a;
+          color: #14f195;
+        }
+        .lbl {
+          display: block;
+          font-size: 12px;
+          color: var(--pcw-muted);
+          margin-top: 12px;
+          margin-bottom: 6px;
+        }
+        .row {
+          display: grid;
+          grid-template-columns: auto 1fr;
+          gap: 10px;
+          align-items: center;
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 12px;
+          padding: 10px 12px;
+          background: rgba(255, 255, 255, 0.02);
+        }
+        .token {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 700;
+          color: var(--pcw-text);
+          background: transparent;
+          border: none;
+          cursor: pointer;
+        }
+        .token img { width: 20px; height: 20px; border-radius: 999px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; display: inline-block; }
+
+        .amtBox { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+        .amt {
+          text-align: right; font-size: 18px; border: none; outline: none; background: transparent; color: var(--pcw-text);
+        }
+        .amt::placeholder { color: #7f8aa3; }
+        .max {
+          border: 1px solid var(--pcw-stroke);
+          border-radius: 999px;
+          padding: 4px 8px;
+          font-size: 12px;
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--pcw-text);
+        }
+        .amtCol { display: flex; flex-direction: column; align-items: flex-end; }
+        .fiat { font-size: 12px; line-height: 1.1; margin-top: 2px; color: #94a3b8; }
+
+        .metaRow { display: flex; justify-content: space-between; margin-top: 4px; }
+        .usd, .bal { font-size: 12px; color: var(--pcw-muted); }
+
+        .flip-wrap { display:flex; justify-content:center; align-items:center; margin: 8px 0 10px; }
+        .flip {
+          width: 30px; height: 30px;
+          display:inline-flex; align-items:center; justify-content:center;
+          border-radius:999px; border:1px solid var(--pcw-stroke);
+          background:#0f1b34; box-shadow:0 2px 10px rgba(0,0,0,0.25);
+          cursor:pointer; font-weight:700; line-height:1; color: var(--pcw-text);
+        }
+        .flip:hover { background:#132449; }
+
+        .slip { display:flex; justify-content:space-between; align-items:center; margin-top: 14px; }
         .chips { display:flex; gap:8px; align-items:center; }
-        .chip { border:1px solid #d7dbdf; background:#f6f8fa; border-radius:999px; padding:6px 10px; font-size:12px; }
-        .chip.on { background:#0f9d58; color:#fff; border-color:#0f9d58; }
+        .chip {
+          border: 1px solid #2c3a58; background: transparent; color: #a8b4c9;
+          border-radius: 999px; padding: 6px 10px; font-size: 12px;
+        }
+        .chip.on {
+          color: #06161c;
+          background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
+          border-color: transparent;
+          box-shadow: 0 0 20px rgba(20, 241, 149, 0.25), 0 0 8px rgba(6, 182, 212, 0.3);
+        }
         .custom { display:flex; align-items:center; gap:6px; }
-        .custom input { width:60px; border:1px solid #e6e8eb; border-radius:8px; padding:6px 8px; text-align:right; font-size:12px; }
-        .meta { display:flex; justify-content:space-between; font-size:12px; margin-top:8px; }
-        .muted { color:#6b7280; }
-        .err { margin-top:8px; color:#b42318; font-size:13px; }
-        .swap { width:100%; margin-top:14px; background:#118a4e; color:#fff; border:none; border-radius:12px; padding:12px; font-weight:700; cursor:pointer; }
-        .swap:disabled { opacity:.6; cursor:not-allowed; }
+        .custom input {
+          width: 60px; border: 1px solid var(--pcw-stroke); border-radius:8px; padding: 6px 8px;
+          text-align:right; font-size:12px; color: var(--pcw-text); background:#0f1b34;
+        }
+
+        .meta { display:flex; justify-content:space-between; font-size:12px; margin-top: 8px; }
+        .muted { color: var(--pcw-muted); }
+        .err { margin-top: 8px; color: #ff6b6b; font-size: 13px; }
+
+        .swap {
+          width: 100%; margin-top: 14px;
+          background: linear-gradient(90deg, #7c3aed, #06b6d4 60%, #14f195);
+          color: #06161c; border: none; border-radius: 12px; padding: 12px; font-weight: 800;
+          cursor: pointer; box-shadow: 0 10px 25px rgba(20, 241, 149, 0.2);
+        }
+        .swap:hover { filter: brightness(1.05); }
+        .swap:disabled { opacity: 0.55; cursor: not-allowed; }
       `}</style>
     </div>
   );
-}
-
-/* -------------- utils -------------- */
-function toUnits(amount: string, decimals: number): string {
-  const [i, f = ""] = (amount || "0").split(".");
-  const cleanI = i.replace(/\D/g, "") || "0";
-  const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
-  const s = BigInt(cleanI) * BigInt(10) ** BigInt(decimals) + BigInt(cleanF || "0");
-  return s.toString();
 }

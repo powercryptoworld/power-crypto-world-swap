@@ -57,7 +57,7 @@ const CHAINS: { id: number; name: string }[] = [
 
 /* -------- chain params for add/switch (MetaMask) -------- */
 const RPC: Record<number, string[]> = {
-  1: ["https://twilight-warmhearted-sun.quiknode.pro/1b0aa7d5389980aadfe80082f8b9c5d11d1ae78b/"],
+  1: ["https://rpc.ankr.com/eth"],
   56: ["https://bsc-dataseed.binance.org/"],
   137: ["https://polygon-rpc.com/"],
   42161: ["https://arb1.arbitrum.io/rpc"],
@@ -169,7 +169,7 @@ async function readErc20MetaViaRpc(chainId: number, address: string): Promise<To
   return null;
 }
 
-/* ------------- Token Picker ------------- */
+/* ---------------- Token Picker ---------------- */
 function TokenPicker({
   open,
   onClose,
@@ -206,15 +206,13 @@ function TokenPicker({
 
   const qIsAddr = isAddress(q.trim());
 
-  // AUTO-LOAD: if user pasted a contract address, fetch and add it instantly
+  // Auto-load by address when pasted
   useEffect(() => {
     let stop = false;
     (async () => {
       if (!qIsAddr) return;
-      // avoid duplicate fetch if it already exists
       const addrL = q.trim().toLowerCase();
       if (tokens && tokens[addrL]) {
-        // already in list; auto-select
         onSelect(tokens[addrL]);
         return;
       }
@@ -222,9 +220,7 @@ function TokenPicker({
       setCustomErr(null);
       try {
         await onLoadByAddress(addrL);
-        if (!stop) {
-          setQ(""); // clear search so the new token shows in the list
-        }
+        if (!stop) setQ("");
       } catch (e: any) {
         if (!stop) setCustomErr(e?.message || "Failed to load token");
       } finally {
@@ -251,26 +247,32 @@ function TokenPicker({
 
         {qIsAddr && (
           <div className="custom-load">
-            <div>Contract on {CHAINS.find((c) => c.id === chainId)?.name}:</div>
-            <code>{q.trim()}</code>
-            <button
-              disabled={loadingCustom}
-              onClick={async () => {
-                setLoadingCustom(true);
-                setCustomErr(null);
-                try {
-                  await onLoadByAddress(q.trim());
-                  setQ("");
-                } catch (e: any) {
-                  setCustomErr(e?.message || "Failed to load token");
-                } finally {
-                  setLoadingCustom(false);
-                }
-              }}
-            >
-              {loadingCustom ? "Loading…" : "Add token from chain"}
-            </button>
-            {customErr && <div className="err">{customErr}</div>}
+            <div className="custom-left">
+              <div className="custom-caption">
+                Contract on {CHAINS.find((c) => c.id === chainId)?.name}:
+              </div>
+              <code className="custom-code">{q.trim()}</code>
+            </div>
+            <div className="custom-right">
+              <button
+                disabled={loadingCustom}
+                onClick={async () => {
+                  setLoadingCustom(true);
+                  setCustomErr(null);
+                  try {
+                    await onLoadByAddress(q.trim());
+                    setQ("");
+                  } catch (e: any) {
+                    setCustomErr(e?.message || "Failed to load token");
+                  } finally {
+                    setLoadingCustom(false);
+                  }
+                }}
+              >
+                {loadingCustom ? "Loading…" : "Add token from chain"}
+              </button>
+              {customErr && <div className="err">{customErr}</div>}
+            </div>
           </div>
         )}
 
@@ -308,10 +310,19 @@ function TokenPicker({
       </div>
 
       <style jsx>{`
-        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding-top:10vh; z-index:50; }
-        .picker { width:520px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
+        .picker-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.4); display:flex; align-items:flex-start; justify-content:center; padding:10vh 12px 24px; z-index:50; }
+        .picker { width:600px; max-width:92vw; background:#fff; border:1px solid #e6e8eb; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.12); overflow:hidden; }
+
         .picker-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid #eef0f2; }
         .picker-top input { flex:1; border:1px solid #e6e8eb; border-radius:10px; padding:10px 12px; }
+
+        .custom-load { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid #f3f5f7; flex-wrap:wrap; }
+        .custom-left { display:flex; align-items:center; gap:10px; flex:1 1 320px; min-width:0; }
+        .custom-caption { white-space:nowrap; color:#374151; }
+        .custom-code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; max-width:100%; overflow:auto; word-break:break-all; }
+        .custom-right { display:flex; align-items:center; gap:8px; }
+        .custom-load button { border:1px solid #0f9d58; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
+
         .picker-list { max-height:60vh; overflow:auto; }
         .picker-row { width:100%; display:grid; grid-template-columns:32px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; text-align:left; }
         .picker-row:hover { background:#f9f9fb; }
@@ -321,9 +332,6 @@ function TokenPicker({
         .pick-name { font-size:12px; color:#6b7280; }
         .pick-addr { font-size:11px; color:#9aa1a9; }
         .picker-empty { padding:16px; color:#6b7280; font-size:14px; }
-        .custom-load { display:flex; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid #f3f5f7; }
-        .custom-load code { background:#f6f8fa; border:1px solid #e6e8eb; padding:4px 6px; border-radius:6px; }
-        .custom-load button { border:1px solid #d7dbdf; border-radius:10px; padding:6px 10px; background:#0f9d58; color:#fff; }
         .err { color:#b42318; font-size:12px; }
       `}</style>
     </div>
@@ -335,7 +343,7 @@ export default function Page() {
   // wallet
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(56); // default BNB for your testing
+  const [chainId, setChainId] = useState<number>(56); // default BNB
 
   // tokens
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
@@ -345,7 +353,7 @@ export default function Page() {
   const [pickDstOpen, setPickDstOpen] = useState(false);
 
   // swap state
-  const [amountIn, setAmountIn] = useState<string>("0.01");
+  const [amountIn, setAmountIn] = useState<string>("1");
   const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
   const [customSlip, setCustomSlip] = useState<string>("");
 
@@ -355,6 +363,10 @@ export default function Page() {
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
+
+  // balances
+  const [srcBal, setSrcBal] = useState<number | null>(null);
+  const [dstBal, setDstBal] = useState<number | null>(null);
 
   const debounceRef = useRef<number | null>(null);
   const bps = useMemo(
@@ -388,7 +400,7 @@ export default function Page() {
     setAccount(null);
   }
 
-  // when UI chain changes, switch/add in wallet
+  // switch chain in wallet when UI chain changes
   useEffect(() => {
     (async () => {
       try {
@@ -478,27 +490,24 @@ export default function Page() {
     setDstToken(t);
   }
 
-  /* ---- Add custom by address (SERVER API) ---- */
+  /* ---- Add custom by address ---- */
   async function loadCustomAddress(addr: string) {
     const a = addr.trim().toLowerCase();
     if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
-    // read meta from server (works for ERC-20/BEP-20/etc on selected chain)
     const meta = await readErc20MetaViaRpc(chainId, a);
     if (!meta) throw new Error("Could not read token (check network/contract)");
     setTokens((prev) => {
       const next = { ...(prev || {}) };
       next[a] = {
         ...meta,
-        // fallback logo pattern similar to 1inch
         logoURI: meta.logoURI || `https://tokens.1inch.io/${chainId}/${a}.png`,
       };
       return next;
     });
-    // make it the current selection (acts like 1inch behavior)
     setSrcToken((s) => s || (meta as Token));
   }
 
-  /* ---- main quote ---- */
+  /* ---- 1inch quote ---- */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
@@ -527,10 +536,9 @@ export default function Page() {
         setQuoting(false);
       }
     }, 250);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
 
-  /* ---- $ reflections ---- */
+  /* ---- Simple USD reflections ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -567,7 +575,30 @@ export default function Page() {
     })();
   }, [chainId, srcToken, dstToken, amountIn, quote]);
 
-  /* ---- Build + Send (robust hex) ---- */
+  /* ---- Balances (direct RPC via wallet) ---- */
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !srcToken) return setSrcBal(null);
+        try { await ensureChain(chainId); } catch {}
+        const bal = await readTokenBalance(account, srcToken);
+        setSrcBal(bal);
+      } catch { setSrcBal(null); }
+    })();
+  }, [account, chainId, srcToken?.address]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!account || !dstToken) return setDstBal(null);
+        try { await ensureChain(chainId); } catch {}
+        const bal = await readTokenBalance(account, dstToken);
+        setDstBal(bal);
+      } catch { setDstBal(null); }
+    })();
+  }, [account, chainId, dstToken?.address]);
+
+  /* ---- Build + Send ---- */
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
@@ -664,6 +695,29 @@ export default function Page() {
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
   }, [quote, amountIn, srcToken, dstToken]);
 
+  // dummy price impact label (not calculated here)
+  const priceImpact = "0.00%";
+
+  // MAX: uses src balance; for native leaves tiny gas buffer
+  const onMaxSrc = () => {
+    if (srcBal == null || !srcToken) return;
+    let max = srcBal;
+    const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
+    if (isNative) max = Math.max(0, max - 0.0003); // leave dust for gas
+    setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
+  };
+  const onMaxDst = () => {
+    // For simplicity, same behavior as pay-side MAX: swap all you can pay.
+    onMaxSrc();
+  };
+
+  const onFlip = () => {
+    const a = srcToken;
+    const b = dstToken;
+    setSrcToken(b);
+    setDstToken(a);
+  };
+
   return (
     <div className="wrap">
       <div className="card">
@@ -709,15 +763,26 @@ export default function Page() {
             )}
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
-          <input
-            className="amt"
-            value={amountIn}
-            inputMode="decimal"
-            onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
-            placeholder="0.0"
-          />
+          <div className="amtBox">
+            <input
+              className="amt"
+              value={amountIn}
+              inputMode="decimal"
+              onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0.0"
+            />
+            <button className="max" onClick={onMaxSrc}>MAX</button>
+          </div>
         </div>
-        <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
+        <div className="metaRow">
+          <div className="usd">{payUsd != null ? `$${fmt(payUsd, 2)}` : "—"}</div>
+          <div className="bal">Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}</div>
+        </div>
+
+        {/* centered flip */}
+        <div className="flip-wrap">
+          <button className="flip" onClick={onFlip} aria-label="Flip pay/receive">↑↓</button>
+        </div>
 
         {/* You receive */}
         <label className="lbl">You receive</label>
@@ -731,9 +796,15 @@ export default function Page() {
             )}
             <span>{dstToken?.symbol || "Select"}</span>
           </button>
-          <div className="amt ro">{quoting ? "…" : toAmount}</div>
+          <div className="amtBox">
+            <div className="amt ro">{quoting ? "…" : toAmount}</div>
+            <button className="max" onClick={onMaxDst}>MAX</button>
+          </div>
         </div>
-        <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
+        <div className="metaRow">
+          <div className="usd">{recvUsd != null ? `$${fmt(recvUsd, 2)}` : "—"}</div>
+          <div className="bal">Balance: {dstBal != null ? fmt(dstBal, 6) : "—"}</div>
+        </div>
 
         {/* Slippage */}
         <div className="slip">
@@ -764,7 +835,7 @@ export default function Page() {
         {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">Est. network fee: –</div>
+          <div className="muted">Est. network fee: – <span className="impact">• Price impact: {priceImpact}</span></div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
@@ -808,9 +879,16 @@ export default function Page() {
         .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
         .token img { width:20px; height:20px; border-radius:999px; }
         .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; }
+        .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; }
         .amt.ro { user-select:none; }
-        .usd { font-size:12px; color:#6b7280; text-align:right; margin-top:4px; min-height:16px; }
+        .max { border:1px solid #d7dbdf; border-radius:999px; padding:4px 8px; font-size:12px; background:#f6f8fa; }
+        .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
+        .usd { font-size:12px; color:#6b7280; }
+        .bal { font-size:12px; color:#6b7280; }
+        .flip-wrap { display:flex; justify-content:center; align-items:center; margin: 8px 0 10px; }
+        .flip { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #e6e8eb; background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.06); cursor:pointer; font-weight:700; line-height:1; }
+        .flip:hover { background:#f7f9fb; }
         .slip { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
         .chips { display:flex; gap:8px; align-items:center; }
         .chip { border:1px solid #d7dbdf; background:#f6f8fa; border-radius:999px; padding:6px 10px; font-size:12px; }
@@ -819,6 +897,7 @@ export default function Page() {
         .custom input { width:60px; border:1px solid #e6e8eb; border-radius:8px; padding:6px 8px; text-align:right; font-size:12px; }
         .meta { display:flex; justify-content:space-between; font-size:12px; margin-top:8px; }
         .muted { color:#6b7280; }
+        .impact { color:#b42318; font-weight:600; }
         .err { margin-top:8px; color:#b42318; font-size:13px; }
         .swap { width:100%; margin-top:14px; background:#118a4e; color:#fff; border:none; border-radius:12px; padding:12px; font-weight:700; cursor:pointer; }
         .swap:disabled { opacity:.6; cursor:not-allowed; }
@@ -834,4 +913,28 @@ function toUnits(amount: string, decimals: number): string {
   const cleanF = (f.replace(/\D/g, "") + "0".repeat(decimals)).slice(0, decimals);
   const s = BigInt(cleanI) * BigInt(10) ** BigInt(decimals) + BigInt(cleanF || "0");
   return s.toString();
+}
+
+/* ---- minimal balance readers via wallet RPC ---- */
+async function readTokenBalance(account: string, token: Token): Promise<number> {
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("Wallet not found");
+
+  // Native coin
+  if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
+    const hexBal: string = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
+    const wei = BigInt(hexBal);
+    return Number(wei) / 10 ** (token.decimals || 18);
+  }
+
+  // ERC-20 balanceOf(address)
+  const selector = "0x70a08231";
+  const addr = account.replace(/^0x/, "").padStart(64, "0");
+  const data = selector + addr;
+  const hex: string = await eth.request({
+    method: "eth_call",
+    params: [{ to: token.address, data }, "latest"],
+  });
+  const raw = BigInt(hex || "0x0");
+  return Number(raw) / 10 ** (token.decimals || 18);
 }

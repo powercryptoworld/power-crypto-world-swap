@@ -156,7 +156,7 @@ function asNativeToken(chainId: number, base?: Token): Token | undefined {
 }
 const isAddress = (s: string) => /^0x[a-fA-F0-9]{40}$/.test(s.trim());
 
-/* ---------- Server API: read ERC-20 meta (works on all EVM chains) ---------- */
+/* ---------- Server API: read ERC-20 meta ---------- */
 async function readErc20MetaViaRpc(chainId: number, address: string): Promise<Token | null> {
   const r = await fetch("/api/erc20meta", {
     method: "POST",
@@ -340,31 +340,26 @@ function TokenPicker({
 
 /* ---------------- Page ---------------- */
 export default function Page() {
-  // wallet
   const [account, setAccount] = useState<string | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
-  const [chainId, setChainId] = useState<number>(56); // default BNB
+  const [chainId, setChainId] = useState<number>(56);
 
-  // tokens
   const [tokens, setTokens] = useState<TokensByAddr | undefined>(undefined);
   const [srcToken, setSrcToken] = useState<Token | undefined>(undefined);
   const [dstToken, setDstToken] = useState<Token | undefined>(undefined);
   const [pickSrcOpen, setPickSrcOpen] = useState(false);
   const [pickDstOpen, setPickDstOpen] = useState(false);
 
-  // swap state
   const [amountIn, setAmountIn] = useState<string>("1");
   const [slipMode, setSlipMode] = useState<"slow" | "market" | "fast" | "custom">("market");
   const [customSlip, setCustomSlip] = useState<string>("");
 
-  // quote + USD
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [payUsd, setPayUsd] = useState<number | null>(null);
   const [recvUsd, setRecvUsd] = useState<number | null>(null);
 
-  // balances
   const [srcBal, setSrcBal] = useState<number | null>(null);
   const [dstBal, setDstBal] = useState<number | null>(null);
 
@@ -381,7 +376,6 @@ export default function Page() {
     [slipMode, customSlip]
   );
 
-  /* ---- wallet ---- */
   async function connect() {
     const eth = (window as any).ethereum;
     if (!eth) return alert("MetaMask not found");
@@ -400,7 +394,6 @@ export default function Page() {
     setAccount(null);
   }
 
-  // switch chain in wallet when UI chain changes
   useEffect(() => {
     (async () => {
       try {
@@ -411,27 +404,6 @@ export default function Page() {
       }
     })();
   }, [chainId, walletChainId]);
-
-  /* ---- tokens fetch ---- */
-  async function fetchTokens(cid: number): Promise<TokensByAddr> {
-    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
-    const j = await r.json();
-    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
-    if (!map && Array.isArray(j)) {
-      map = {};
-      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
-    }
-    if (!map) map = {};
-    const norm: TokensByAddr = {};
-    for (const [kRaw, tRaw] of Object.entries(map)) {
-      const k = kRaw.toLowerCase();
-      const t: any = { ...tRaw };
-      t.address = String(t.address);
-      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
-      norm[k] = t as Token;
-    }
-    return norm;
-  }
 
   function pickNative(map: TokensByAddr): Token | undefined {
     const vals = Object.values(map);
@@ -457,6 +429,33 @@ export default function Page() {
       vals[1]
     );
   }
+  function pickPCW(map: TokensByAddr): Token | undefined {
+    const vals = Object.values(map);
+    return (
+      vals.find((t) => (t.symbol || "").toUpperCase() === "PCW") ||
+      vals.find((t) => (t.name || "").toLowerCase().includes("power crypto world"))
+    );
+  }
+
+  async function fetchTokens(cid: number): Promise<TokensByAddr> {
+    const r = await fetch(`/api/oneinch/tokens?chainId=${cid}`);
+    const j = await r.json();
+    let map: TokensByAddr | undefined = j?.tokens || j?.data?.tokens;
+    if (!map && Array.isArray(j)) {
+      map = {};
+      (j as any[]).forEach((t: any) => (map![String(t.address).toLowerCase()] = t));
+    }
+    if (!map) map = {};
+    const norm: TokensByAddr = {};
+    for (const [kRaw, tRaw] of Object.entries(map)) {
+      const k = kRaw.toLowerCase();
+      const t: any = { ...tRaw };
+      t.address = String(t.address);
+      if (!t.logoURI) t.logoURI = t.logoUrl || t.logo || t.icon || undefined;
+      norm[k] = t as Token;
+    }
+    return norm;
+  }
 
   useEffect(() => {
     let stop = false;
@@ -468,7 +467,7 @@ export default function Page() {
         const map = await fetchTokens(chainId);
         if (stop) return;
         setTokens(map);
-        setSrcToken(pickNative(map) || Object.values(map)[0]);
+        setSrcToken((chainId === 56 ? pickPCW(map) : undefined) || pickNative(map) || Object.values(map)[0]);
         setDstToken(pickUSDC(map) || Object.values(map)[1]);
       } catch (e) {
         console.error(e);
@@ -490,7 +489,6 @@ export default function Page() {
     setDstToken(t);
   }
 
-  /* ---- Add custom by address ---- */
   async function loadCustomAddress(addr: string) {
     const a = addr.trim().toLowerCase();
     if (!isAddress(a)) throw new Error("Not a contract address (must start 0x + 40 chars)");
@@ -507,7 +505,6 @@ export default function Page() {
     setSrcToken((s) => s || (meta as Token));
   }
 
-  /* ---- 1inch quote ---- */
   useEffect(() => {
     if (!srcToken || !dstToken) return;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
@@ -538,7 +535,6 @@ export default function Page() {
     }, 250);
   }, [chainId, srcToken?.address, dstToken?.address, amountIn]);
 
-  /* ---- Simple USD reflections ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -575,7 +571,6 @@ export default function Page() {
     })();
   }, [chainId, srcToken, dstToken, amountIn, quote]);
 
-  /* ---- Balances (direct RPC via wallet) ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -598,7 +593,6 @@ export default function Page() {
     })();
   }, [account, chainId, dstToken?.address]);
 
-  /* ---- Build + Send ---- */
   async function onSwap() {
     if (!account) return alert("Connect wallet first");
     if (!srcToken || !dstToken) return alert("Pick both tokens");
@@ -672,7 +666,7 @@ export default function Page() {
       if (maxFeePerGas) txParams.maxFeePerGas = maxFeePerGas;
       if (maxPriorityFeePerGas) txParams.maxPriorityFeePerGas = maxPriorityFeePerGas;
 
-      const txHash: string = await eth.request({
+      const txHash: string = await (window as any).ethereum.request({
         method: "eth_sendTransaction",
         params: [txParams],
       });
@@ -695,21 +689,23 @@ export default function Page() {
     return aIn ? `${fmt(out / aIn, 6)} ${dstToken.symbol} per ${srcToken.symbol}` : "—";
   }, [quote, amountIn, srcToken, dstToken]);
 
-  // dummy price impact label (not calculated here)
   const priceImpact = "0.00%";
 
-  // MAX: uses src balance; for native leaves tiny gas buffer
+  // MAX buttons
   const onMaxSrc = () => {
     if (srcBal == null || !srcToken) return;
-    let max = srcBal;
     const isNative = srcToken.address.toLowerCase() === NATIVE.toLowerCase();
-    if (isNative) max = Math.max(0, max - 0.0003); // leave dust for gas
-    setAmountIn(max > 0 ? String(Number(max.toFixed(6))) : "0");
+    if (!isNative) {
+      setAmountIn(srcBal > 0 ? String(Number(srcBal.toFixed(6))) : "0");
+      return;
+    }
+    const pct = srcBal * 0.02;
+    const floor = 0.00002;
+    const safety = Math.max(pct, floor);
+    const spendable = Math.max(0, srcBal - safety);
+    setAmountIn(spendable > 0 ? String(Number(spendable.toFixed(6))) : "0");
   };
-  const onMaxDst = () => {
-    // For simplicity, same behavior as pay-side MAX: swap all you can pay.
-    onMaxSrc();
-  };
+  const onMaxDst = () => { onMaxSrc(); };
 
   const onFlip = () => {
     const a = srcToken;
@@ -717,6 +713,11 @@ export default function Page() {
     setSrcToken(b);
     setDstToken(a);
   };
+
+  const pcwToken = useMemo(
+    () => (tokens ? Object.values(tokens).find(t => (t.symbol || "").toUpperCase() === "PCW") : undefined),
+    [tokens]
+  );
 
   return (
     <div className="wrap">
@@ -736,6 +737,18 @@ export default function Page() {
                 </option>
               ))}
             </select>
+            {pcwToken && (
+              <button
+                className="btn"
+                title="Spend PCW"
+                onClick={() => {
+                  setSrcToken(pcwToken);
+                  setAmountIn("");
+                }}
+              >
+                Spend PCW
+              </button>
+            )}
             {account ? (
               <>
                 <span className="pill green">{short(account)}</span>
@@ -764,14 +777,17 @@ export default function Page() {
             <span>{srcToken?.symbol || "Select"}</span>
           </button>
           <div className="amtBox">
+            {/* KEY makes the input remount when pay token changes → fixes “frozen” input */}
             <input
+              key={srcToken ? srcToken.address : "native"}
               className="amt"
               value={amountIn}
               inputMode="decimal"
+              autoFocus
               onChange={(e) => setAmountIn(e.target.value.replace(/[^\d.]/g, ""))}
               placeholder="0.0"
             />
-            <button className="max" onClick={onMaxSrc}>MAX</button>
+            <button className="max" type="button" onClick={onMaxSrc}>MAX</button>
           </div>
         </div>
         <div className="metaRow">
@@ -779,7 +795,6 @@ export default function Page() {
           <div className="bal">Balance: {srcBal != null ? fmt(srcBal, 6) : "—"}</div>
         </div>
 
-        {/* centered flip */}
         <div className="flip-wrap">
           <button className="flip" onClick={onFlip} aria-label="Flip pay/receive">↑↓</button>
         </div>
@@ -798,7 +813,7 @@ export default function Page() {
           </button>
           <div className="amtBox">
             <div className="amt ro">{quoting ? "…" : toAmount}</div>
-            <button className="max" onClick={onMaxDst}>MAX</button>
+            <button className="max" type="button" onClick={onMaxDst}>MAX</button>
           </div>
         </div>
         <div className="metaRow">
@@ -832,10 +847,9 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Meta */}
         <div className="meta">
           <div className="muted">{rateText}</div>
-          <div className="muted">Est. network fee: – <span className="impact">• Price impact: {priceImpact}</span></div>
+          <div className="muted">Est. network fee: – <span className="impact">• Price impact: 0.00%</span></div>
         </div>
 
         {quoteErr && <div className="err">Quote error: {quoteErr}</div>}
@@ -845,7 +859,6 @@ export default function Page() {
         </button>
       </div>
 
-      {/* Pickers */}
       <TokenPicker
         open={pickSrcOpen}
         onClose={() => setPickSrcOpen(false)}
@@ -875,12 +888,12 @@ export default function Page() {
         .btn, .link { border:1px solid #d7dbdf; border-radius:10px; background:#f6f8fa; padding:6px 10px; font-size:13px; }
         .link { background:transparent; border:none; color:#006adc; cursor:pointer; }
         .lbl { display:block; font-size:12px; color:#6b7280; margin-top:12px; margin-bottom:6px; }
-        .row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
+        .row { position:relative; display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; border:1px solid #e6e8eb; border-radius:12px; padding:10px 12px; }
         .token { display:flex; align-items:center; gap:8px; font-weight:600; background:transparent; border:none; cursor:pointer; }
         .token img { width:20px; height:20px; border-radius:999px; }
         .dot { width:10px; height:10px; border-radius:50%; background:#c4c9cf; display:inline-block; }
         .amtBox { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
-        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; }
+        .amt { text-align:right; font-size:18px; border:none; outline:none; background:transparent; pointer-events:auto; }
         .amt.ro { user-select:none; }
         .max { border:1px solid #d7dbdf; border-radius:999px; padding:4px 8px; font-size:12px; background:#f6f8fa; }
         .metaRow { display:flex; justify-content:space-between; margin-top:4px; }
@@ -920,14 +933,11 @@ async function readTokenBalance(account: string, token: Token): Promise<number> 
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("Wallet not found");
 
-  // Native coin
   if (token.address.toLowerCase() === NATIVE.toLowerCase()) {
     const hexBal: string = await eth.request({ method: "eth_getBalance", params: [account, "latest"] });
-    const wei = BigInt(hexBal);
+    const wei = BigInt(hexBal || "0x0");
     return Number(wei) / 10 ** (token.decimals || 18);
   }
-
-  // ERC-20 balanceOf(address)
   const selector = "0x70a08231";
   const addr = account.replace(/^0x/, "").padStart(64, "0");
   const data = selector + addr;
